@@ -11,6 +11,10 @@ published releases on GitHub.
 Builds from this repository are unsigned and configure no update feed, so
 automatic updates are unavailable in them.
 
+## 1.0.4 — Manual nodes persist across restarts (#60)
+
+- Manually added nodes are restored after the broker or manual-node worker restarts.
+
 ## 1.0.3 — Report Ollama model download failures correctly (#138)
 
 - Ollama model downloads now report failures when the engine sends an error record after starting an HTTP 200 stream.
