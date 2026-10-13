@@ -11,6 +11,10 @@ published releases on GitHub.
 Builds from this repository are unsigned and configure no update feed, so
 automatic updates are unavailable in them.
 
+## 1.0.2 — Route OpenAI Responses requests by model (#155)
+
+- POST /v1/responses now counts as inference. PAIR sends it to a node that advertises the requested model and records it as a workload. That path used to be forwarded with no model filter.
+
 ## 1.0.1 — Add documentation for registry.go and refactor types/tests (#140)
 
 - Refactored saved engine launch settings while preserving literal arguments, environment values, and explicit empty overrides.
