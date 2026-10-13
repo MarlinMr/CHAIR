@@ -11,6 +11,10 @@ published releases on GitHub.
 Builds from this repository are unsigned and configure no update feed, so
 automatic updates are unavailable in them.
 
+## 1.0.5 — Harden trusted-peer file paths (#159)
+
+- Reject unsafe peer identifiers before loading, writing, or removing trust-store files, protecting cluster data from path traversal.
+
 ## 1.0.4 — Manual nodes persist across restarts (#60)
 
 - Manually added nodes are restored after the broker or manual-node worker restarts.
