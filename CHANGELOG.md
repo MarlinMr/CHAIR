@@ -11,6 +11,10 @@ published releases on GitHub.
 Builds from this repository are unsigned and configure no update feed, so
 automatic updates are unavailable in them.
 
+## 1.0.3 — Report Ollama model download failures correctly (#138)
+
+- Ollama model downloads now report failures when the engine sends an error record after starting an HTTP 200 stream.
+
 ## 1.0.2 — Route OpenAI Responses requests by model (#155)
 
 - POST /v1/responses now counts as inference. PAIR sends it to a node that advertises the requested model and records it as a workload. That path used to be forwarded with no model filter.
