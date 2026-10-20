@@ -57,8 +57,8 @@ func TestLlamaCPPModelListRoutes(t *testing.T) {
 
 // Routes is a classifier, not an allowlist. handlePlain forwards every
 // loopback path into handleHTTP with no filtering, so a path the table does
-// not mention must still reach the upstream verbatim — that is how /api/show,
-// /api/pull, /api/ps, /api/version and OPTIONS preflights keep working.
+// not mention must still reach the upstream verbatim — that is how /api/pull,
+// /api/ps, /api/version and OPTIONS preflights keep working.
 func TestRoleForClassifiesOnlyDeclaredRoutes(t *testing.T) {
 	ollama, ok := profileFor("ollama")
 	if !ok {
@@ -98,6 +98,7 @@ func TestRoleForClassifiesOnlyDeclaredRoutes(t *testing.T) {
 	accept("ollama anthropic messages", ollama, http.MethodPost, "/v1/messages", roleInferencePOST)
 	accept("ollama native list", ollama, http.MethodGet, "/api/tags", roleModelListNativeGET)
 	accept("ollama openai list", ollama, http.MethodGet, "/v1/models", roleModelListOpenAIGET)
+	accept("ollama show", ollama, http.MethodPost, "/api/show", roleModelLookupPOST)
 
 	accept("lmstudio chat", lmstudio, http.MethodPost, "/v1/chat/completions", roleInferencePOST)
 	accept("lmstudio responses", lmstudio, http.MethodPost, "/v1/responses", roleInferencePOST)
@@ -114,10 +115,12 @@ func TestRoleForClassifiesOnlyDeclaredRoutes(t *testing.T) {
 	reject("wrong method on list", ollama, http.MethodPost, "/v1/models")
 	reject("wrong method on inference", ollama, http.MethodGet, "/api/chat")
 	reject("wrong method on responses", ollama, http.MethodGet, "/v1/responses")
+	reject("wrong method on show", ollama, http.MethodGet, "/api/show")
 
 	reject("lmstudio models passthrough", lmstudio, http.MethodGet, "/models")
 	// LM Studio serves no native Ollama routes, so /api/chat is forwarded verbatim.
 	reject("lmstudio has no native routes", lmstudio, http.MethodPost, "/api/chat")
+	reject("lmstudio has no show", lmstudio, http.MethodPost, "/api/show")
 
 	reject("llamacpp models post passthrough", llamacpp, http.MethodPost, "/models")
 }
@@ -141,6 +144,9 @@ func TestIsInferenceRequestFollowsTheProfile(t *testing.T) {
 	if isInferenceRequest(ollama, "GET", "/api/tags") {
 		t.Error("a model list is not inference")
 	}
+	if isInferenceRequest(ollama, "POST", "/api/show") {
+		t.Error("a model lookup is not inference")
+	}
 }
 
 // One naming convention governs both the federated list's dedupe key and the
@@ -160,10 +166,18 @@ func TestModelNaming(t *testing.T) {
 		{ollama, "llama3:8b", "llama3:8b"},
 		{ollama, "registry.example/llama3", "registry.example/llama3:latest"},
 		{ollama, "llama3@sha256:abc", "llama3@sha256:abc"},
+		{ollama, "library/qwen3:latest", "qwen3:latest"},
+		{ollama, "registry.ollama.ai/library/qwen3:latest", "qwen3:latest"},
+		{ollama, "https://registry.ollama.ai/library/qwen3", "qwen3:latest"},
+		{ollama, "Qwen3", "qwen3:latest"},
+		{ollama, "registry.ollama.ai/qwen3", "registry.ollama.ai/qwen3:latest"},
+		{ollama, "hf.co/Org/Model:Q4_K_M", "hf.co/org/model:q4_k_m"},
+		{ollama, "localhost:5000/ns/m", "localhost:5000/ns/m:latest"},
 		{ollama, "", ""},
 
 		{lmstudio, "qwen3-8b", "qwen3-8b"},
 		{lmstudio, "qwen3-8b:latest", "qwen3-8b:latest"},
+		{lmstudio, "Qwen3-8B", "Qwen3-8B"},
 		{lmstudio, "", ""},
 	} {
 		if got := tc.profile.normalizeModel(tc.in); got != tc.want {
