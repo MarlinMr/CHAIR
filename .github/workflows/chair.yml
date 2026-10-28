@@ -1,0 +1,106 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: CHAIR
+
+on:
+    workflow_dispatch:
+    push:
+        paths:
+            - 'scripts/chair/**'
+            - '.github/workflows/chair.yml'
+            - '.github/actions/setup/**'
+            - 'LICENSE'
+            - 'README.md'
+    pull_request:
+        branches: [main, develop]
+        paths:
+            - 'scripts/chair/**'
+            - '.github/workflows/chair.yml'
+            - '.github/actions/setup/**'
+            - 'LICENSE'
+            - 'README.md'
+
+# Preview builds run untrusted branch/PR code on disposable hosted runners.
+# They have no signing, release-publishing, or deployment credentials.
+permissions:
+    contents: read
+
+concurrency:
+    group: chair-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    test:
+        name: CHAIR tests
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        defaults:
+            run:
+                working-directory: scripts/chair
+        steps:
+            - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - uses: ./.github/actions/setup
+              with:
+                  node: 'false'
+                  go: 'true'
+            - run: go mod verify
+            - run: go vet ./...
+            - run: go test -race ./... -count=1 -timeout=5m
+
+    build:
+        name: CHAIR ${{ matrix.goos }}-${{ matrix.goarch }}
+        needs: test
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        strategy:
+            fail-fast: false
+            matrix:
+                goos: [linux, darwin, windows]
+                goarch: [amd64, arm64]
+        defaults:
+            run:
+                working-directory: scripts/chair
+                shell: bash
+        steps:
+            - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+            - uses: ./.github/actions/setup
+              with:
+                  node: 'false'
+                  go: 'true'
+            - name: Build and package unsigned preview
+              env:
+                  GOOS: ${{ matrix.goos }}
+                  GOARCH: ${{ matrix.goarch }}
+                  CGO_ENABLED: '0'
+              run: |
+                  set -euo pipefail
+                  package="chair-${GOOS}-${GOARCH}"
+                  staging="${RUNNER_TEMP}/${package}"
+                  mkdir -p "${staging}/licenses" dist
+                  suffix=''
+                  if [[ "$GOOS" == windows ]]; then suffix='.exe'; fi
+                  go build -trimpath -o "${staging}/chair${suffix}" .
+                  cp README.md THIRD_PARTY_NOTICES.md ../../LICENSE "$staging/"
+                  websocket_dir=$(go list -m -f '{{.Dir}}' github.com/coder/websocket)
+                  yamux_dir=$(go list -m -f '{{.Dir}}' github.com/hashicorp/yamux)
+                  cp "${websocket_dir}/LICENSE.txt" "${staging}/licenses/coder-websocket-LICENSE.txt"
+                  cp "${yamux_dir}/LICENSE" "${staging}/licenses/hashicorp-yamux-LICENSE.txt"
+                  cp "$(go env GOROOT)/LICENSE" "${staging}/licenses/go-LICENSE.txt"
+                  printf 'CHAIR experimental preview\nSource: https://github.com/MarlinMr/CHAIR\nCommit: %s\nTarget: %s/%s\nToolchain: %s\n' \
+                    "$(git rev-parse HEAD)" "$GOOS" "$GOARCH" "$(go version)" > "${staging}/BUILD_INFO.txt"
+                  if [[ "$GOOS" == windows ]]; then
+                    archive="${package}.zip"
+                    (cd "$staging" && python3 -m zipfile -c "${GITHUB_WORKSPACE}/scripts/chair/dist/${archive}" .)
+                  else
+                    archive="${package}.tar.gz"
+                    tar -czf "dist/${archive}" -C "$staging" .
+                  fi
+                  (cd dist && sha256sum "$archive" > SHA256SUMS)
+            - name: Upload CHAIR preview
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+              with:
+                  name: chair-${{ matrix.goos }}-${{ matrix.goarch }}
+                  path: scripts/chair/dist/*
+                  retention-days: 14
+                  if-no-files-found: error
