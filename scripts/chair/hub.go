@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ type workerConnection struct {
 	inflight        int
 	assigned        uint64
 	inventoryFailed bool
+	hardware        workerHardware
 }
 
 type hub struct {
@@ -117,6 +119,11 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported worker protocol", http.StatusUpgradeRequired)
 		return
 	}
+	hardware, err := decodeHardware(r.Header.Get(hardwareHeader))
+	if err != nil {
+		http.Error(w, "invalid hardware metadata", http.StatusBadRequest)
+		return
+	}
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{protocol}})
 	if err != nil {
 		return
@@ -141,7 +148,7 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 		MaxResponseHeaderBytes: 64 << 10,
 	}
 	defer transport.CloseIdleConnections()
-	worker := &workerConnection{id: id, session: session, transport: transport}
+	worker := &workerConnection{id: id, session: session, transport: transport, hardware: hardware}
 	h.mu.Lock()
 	existing := h.workers[id]
 	if h.closed || (existing != nil && !existing.session.IsClosed()) {
@@ -213,11 +220,15 @@ func (h *hub) Close() error {
 	return result
 }
 
-func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id, token string, target *url.URL, logger *slog.Logger) error {
+func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id, token string, target *url.URL, logger *slog.Logger, hardware workerHardware) error {
 	logger = logger.With("worker_id", id)
+	metadata, err := json.Marshal(hardware)
+	if err != nil {
+		return fmt.Errorf("cannot encode hardware metadata")
+	}
 	ws, response, err := websocket.Dial(ctx, address.String(), &websocket.DialOptions{
 		HTTPClient:   client,
-		HTTPHeader:   http.Header{"Authorization": {"Bearer " + token}, workerIDHeader: {id}},
+		HTTPHeader:   http.Header{"Authorization": {"Bearer " + token}, workerIDHeader: {id}, hardwareHeader: {base64.RawURLEncoding.EncodeToString(metadata)}},
 		Subprotocols: []string{protocol},
 	})
 	if err != nil {

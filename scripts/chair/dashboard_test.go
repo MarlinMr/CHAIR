@@ -40,7 +40,7 @@ func dashboardData(t *testing.T, fixture transportFixture) dashboardView {
 
 func TestDashboard_DisabledUntilSeparateCredentialIsConfigured(t *testing.T) {
 	h := newHub(testClientToken, map[string]string{testWorkerID: testWorkerToken}, 1)
-	for _, path := range []string{"/", "/dashboard/status", "/dashboard/style.css"} {
+	for _, path := range []string{"/", "/dashboard/status", "/dashboard/style.css", "/dashboard/dashboard.js"} {
 		t.Run(path, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "https://hub"+path, nil)
 			request.SetBasicAuth("chair", testDashboardToken)
@@ -116,6 +116,7 @@ func TestDashboard_ShowsAuthorizedWorkersAndFreshModels(t *testing.T) {
 	assert.Equal(t, "gpu-a", view.Workers[0].ID)
 	assert.Equal(t, "Ready", view.Workers[0].Status)
 	assert.Equal(t, []string{"llama:8b", "qwen:7b"}, view.Workers[0].Models)
+	assert.Equal(t, "linux/amd64 · Test CPU · 8 logical CPUs · 32.0 GiB RAM · Test GPU (24.0 GiB VRAM)", view.Workers[0].Hardware)
 	assert.Equal(t, "gpu-b", view.Workers[1].ID)
 	assert.Equal(t, "Disconnected", view.Workers[1].Status)
 	assert.Empty(t, view.Workers[1].Models)
@@ -182,13 +183,21 @@ func TestDashboard_HTMLAndStylesAreEmbeddedAndProtected(t *testing.T) {
 	assert.Contains(t, response.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'")
 	assert.Contains(t, string(body), "CHAIR")
 	assert.Contains(t, string(body), "Active jobs")
-	assert.Contains(t, string(body), `http-equiv="refresh" content="3"`)
+	assert.NotContains(t, string(body), `http-equiv="refresh"`)
+	assert.Contains(t, string(body), `<script src="/dashboard/dashboard.js" defer></script>`)
+	assert.Contains(t, string(body), `data-live="true"`)
 	assert.Contains(t, string(body), "No jobs in flight")
 	stylesheet, err := fixture.client.Do(dashboardRequest(t, fixture, "/dashboard/style.css"))
 	require.NoError(t, err)
 	require.NoError(t, stylesheet.Body.Close())
 	assert.Equal(t, http.StatusOK, stylesheet.StatusCode)
 	assert.Equal(t, "text/css; charset=utf-8", stylesheet.Header.Get("Content-Type"))
+	script, err := fixture.client.Do(dashboardRequest(t, fixture, "/dashboard/dashboard.js"))
+	require.NoError(t, err)
+	require.NoError(t, script.Body.Close())
+	assert.Equal(t, http.StatusOK, script.StatusCode)
+	assert.Equal(t, "text/javascript; charset=utf-8", script.Header.Get("Content-Type"))
+	assert.Contains(t, response.Header.Get("Content-Security-Policy"), "script-src 'self'; connect-src 'self'")
 }
 
 func TestDashboard_CanPauseAutomaticRefresh(t *testing.T) {
@@ -203,6 +212,7 @@ func TestDashboard_CanPauseAutomaticRefresh(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, response.StatusCode)
 	assert.Contains(t, string(body), "Resume live refresh")
+	assert.Contains(t, string(body), `data-live="false"`)
 	assert.NotContains(t, string(body), `http-equiv="refresh"`)
 }
 

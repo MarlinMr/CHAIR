@@ -87,7 +87,12 @@ uses active-request counts, not PAIR's GPU-pressure scheduler.
 
 ## Run
 
-### Download a CI preview
+### Download a release or CI preview
+
+For versioned downloads, visit [CHAIR releases](https://github.com/MarlinMr/CHAIR/releases).
+Releases are experimental and unsigned. CI previews below include newer branch
+changes that may not yet be in a release; published release archives are not
+modified when the branch changes.
 
 Open the [CHAIR workflow](https://github.com/MarlinMr/CHAIR/actions/workflows/chair.yml),
 choose a successful run for your branch/commit, and download the artifact matching
@@ -256,10 +261,34 @@ TLS-terminating reverse proxy is not accepted.
 
 The page shows every authorized worker, including disconnected machines, fresh
 model inventories, and active requests with their worker, model, API route,
-start time, and elapsed duration. It refreshes every three seconds; **Pause live
-refresh** lets you inspect or expand model lists without the page reloading.
+start time, and elapsed duration. It updates data in place every three seconds,
+without reloading the page or closing expanded model/hardware lists. **Pause live
+refresh** stops polling; **Refresh overview** fetches a snapshot even while paused.
+Failed updates leave the last snapshot visible with an update-failed message.
+Without JavaScript, the initial snapshot and manual page refresh remain available,
+but there is no automatic refresh.
 Models from stale or failed inventories are not shown as available. A healthy
 empty inventory can be Ready while advertising no models.
+
+Expand **Host details** for worker-reported OS/architecture, logical CPU count,
+CPU model, total RAM, and NVIDIA GPU names/total VRAM where detectable. CPU/RAM
+detection uses `/proc` on Linux, `sysctl` on macOS, and PowerShell CIM on Windows.
+NVIDIA GPU detection requires `nvidia-smi` on the worker's PATH. AMD/Intel/Apple
+GPU details are not detected yet. A GPU model is still shown when its dedicated
+VRAM is unavailable (for example on unified-memory systems). Missing tools,
+permissions, or unsupported
+hardware produce unavailable values, not a claim that the machine has no GPU.
+Probes run once at worker startup, with bounded command output and a two-second
+deadline per command; restart the worker to re-detect hardware.
+
+These are host facts, **not** live utilization, free-memory values, or proof that
+Ollama is using any listed device. Containers may report host RAM/CPU rather than
+their resource limits; GPU visibility may differ between the worker and Ollama.
+The worker sends only the selected summary fields, never hostnames, serial
+numbers, device UUIDs, or raw command output. Metadata is bounded and validated
+by the hub, and is not used for scheduling. Update the hub for the new UI and
+workers for hardware reporting. The optional metadata does not change transport
+v2; a worker without a report shows unavailable details.
 
 Jobs are only requests routed through this hub, not engine-local work. They
 disappear on completion, failure, or cancellation; there is no job history.
@@ -268,9 +297,10 @@ included. Individual API-client identities are not tracked: this view lists
 GPU workers, not users sharing the client token.
 
 `GET /dashboard/status` provides the same read-only snapshot as JSON with the
-same Basic authentication. HTML, CSS, and JSON all require the dashboard
+same Basic authentication. HTML, CSS, JavaScript, and JSON all require the dashboard
 credential. This credential cannot run inference, administer engines, or modify
-cluster membership. No JavaScript, external assets, or cookie sessions are used.
+cluster membership. A small embedded same-origin script performs status updates;
+there are no external assets, frontend build step, or cookie sessions.
 Browsers may retain Basic credentials until the browser session is closed; use
 a private browser session on shared machines. Token changes require a hub
 restart. Keep this experimental dashboard on trusted networks; worker/model
@@ -463,6 +493,28 @@ Changing authorized identities or credentials requires restarting the relevant
 processes. Stopping the hub disconnects every worker and active request; there is
 no job persistence or hub failover. Workers do not need to be reachable from one
 another or from new hub-initiated connections.
+
+## Dashboard browser regression tests
+
+The Go build and normal Go tests need no Node.js installation. To also run the
+headless Chromium tests (Node.js 20+ and OpenSSL required), from `scripts/chair/`:
+
+```bash
+go build -o ./browser-tests/chair-browser-test .
+npm ci --prefix browser-tests
+cd browser-tests
+npx playwright install chromium
+CHAIR_TEST_BINARY="$PWD/chair-browser-test" npm test
+```
+
+These are POSIX-shell commands; on Windows, build an `.exe` and set
+`CHAIR_TEST_BINARY` to its absolute path using your shell's environment syntax.
+On Linux, missing browser system dependencies can be
+installed with `npx playwright install --with-deps chromium`. Tests start a local
+TLS hub, worker, and fake engine using temporary test-only credentials; no real
+engine or GPU inference is used. They check expansion/focus preservation, safe
+model rendering, polling pause/resume, and failed-update behavior. Playwright is
+a test-only dependency, not part of the executable or dashboard.
 
 ## Dependencies and integration boundary
 

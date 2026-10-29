@@ -42,11 +42,24 @@ jobs:
             - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
             - uses: ./.github/actions/setup
               with:
-                  node: 'false'
-                  go: 'true'
+                   node: 'true'
+                   go: 'true'
+                   npm-cache: 'false'
             - run: go mod verify
             - run: go vet ./...
             - run: go test -race ./... -count=1 -timeout=5m
+            - name: Build browser-test executable
+              run: go build -o "$RUNNER_TEMP/chair-browser-test" .
+            - run: npm ci --ignore-scripts
+              working-directory: scripts/chair/browser-tests
+            - run: npx playwright install --with-deps chromium
+              working-directory: scripts/chair/browser-tests
+            - name: Dashboard browser regression tests
+              run: npm test
+              working-directory: scripts/chair/browser-tests
+              env:
+                  CHAIR_TEST_BINARY: ${{ runner.temp }}/chair-browser-test
+                  TMPDIR: ${{ runner.temp }}
 
     build:
         name: CHAIR ${{ matrix.goos }}-${{ matrix.goarch }}

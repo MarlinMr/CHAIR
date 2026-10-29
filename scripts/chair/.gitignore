@@ -7,3 +7,8 @@
 /*.token
 /workers.json
 /*.key
+/browser-tests/node_modules/
+/browser-tests/test-results/
+/browser-tests/playwright-report/
+/browser-tests/chair-browser-test
+/browser-tests/chair-browser-test.exe

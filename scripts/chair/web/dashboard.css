@@ -63,6 +63,8 @@ code { font: 13px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
 .badge.warning { background: var(--chair-warning-bg); color: var(--chair-warning-text); }
 summary { cursor: pointer; color: var(--chair-accent); }
 .model-list { padding-left: 18px; margin: 8px 0 0; }
+.hardware { min-width: 160px; max-width: 300px; }
+.hardware p { font-size: 13px; overflow-wrap: anywhere; }
 .empty { padding: 28px 18px; color: var(--color-text-secondary); }
 footer { font-size: 12px; margin-top: 24px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

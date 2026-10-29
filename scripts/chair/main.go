@@ -179,10 +179,11 @@ func runWorker(ctx context.Context, args []string) error {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	delay := time.Second
+	hardware := detectHardware(ctx)
 	for ctx.Err() == nil {
 		started := time.Now()
 		logger.Info("connecting experimental CHAIR worker", "worker_id", *id)
-		_ = connectToHub(ctx, client, u, *id, token, target, logger)
+		_ = connectToHub(ctx, client, u, *id, token, target, logger, hardware)
 		if ctx.Err() != nil {
 			break
 		}

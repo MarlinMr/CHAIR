@@ -29,7 +29,9 @@ at the version-specific links above; the yamux source remains available under th
 Mozilla Public License 2.0. Go checksums are recorded in `go.sum`.
 
 Test-only dependencies are `github.com/stretchr/testify` v1.12.1 (MIT) and
-`go.yaml.in/yaml/v3` v3.0.5 (MIT and Apache-2.0); they are not linked into the
+`go.yaml.in/yaml/v3` v3.0.5 (MIT and Apache-2.0), plus `@playwright/test` v1.64.1
+(Apache-2.0, https://github.com/microsoft/playwright/tree/v1.64.1) and its
+Playwright dependencies for browser regression tests. They are not linked into the
 distributed `chair` executable. The inherited desktop application's separately
 generated notices are in the repository-root `THIRD_PARTY_NOTICES.md` and do not
 describe these standalone CHAIR archives.

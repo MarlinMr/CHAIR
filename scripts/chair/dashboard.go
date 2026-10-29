@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-//go:embed web/dashboard.html web/dashboard.css
+//go:embed web/dashboard.html web/dashboard.css web/dashboard.js
 var dashboardAssets embed.FS
 
 var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "web/dashboard.html"))
@@ -43,6 +43,7 @@ type dashboardWorker struct {
 	Models       []string `json:"models"`
 	Inflight     int      `json:"inflight"`
 	InventoryAge string   `json:"inventory_age"`
+	Hardware     string   `json:"hardware"`
 }
 
 type dashboardView struct {
@@ -89,7 +90,7 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	if r.TLS == nil {
 		http.Error(w, "TLS required", http.StatusForbidden)
 		return
@@ -117,6 +118,14 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/dashboard/dashboard.js":
+		script, err := dashboardAssets.ReadFile("web/dashboard.js")
+		if err != nil {
+			http.Error(w, "script unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write(script)
 	case "/dashboard/style.css":
 		css, err := dashboardAssets.ReadFile("web/dashboard.css")
 		if err != nil {
@@ -150,10 +159,11 @@ func (h *hub) dashboardSnapshot() dashboardView {
 	view := dashboardView{GeneratedAt: now, Authorized: len(h.workerTokens), Limit: cap(h.requests), Workers: make([]dashboardWorker, 0, len(h.workerTokens)), Jobs: make([]dashboardJob, 0, len(h.jobs))}
 	models := make(map[string]bool)
 	for id := range h.workerTokens {
-		row := dashboardWorker{ID: id, Status: "Disconnected", StatusClass: "muted", Models: []string{}, InventoryAge: "Never"}
+		row := dashboardWorker{ID: id, Status: "Disconnected", StatusClass: "muted", Models: []string{}, InventoryAge: "Never", Hardware: "Hardware unavailable"}
 		if worker := h.workers[id]; !h.closed && worker != nil && !worker.session.IsClosed() {
 			view.Connected++
 			row.Inflight = worker.inflight
+			row.Hardware = worker.hardware.summary()
 			switch {
 			case worker.inventoryFailed:
 				row.Status, row.StatusClass = "Inventory unavailable", "warning"
