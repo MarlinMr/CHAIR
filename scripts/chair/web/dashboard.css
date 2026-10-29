@@ -31,7 +31,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--background-color-surface-sunken); color: var(--color-text-primary); font: 15px/1.55 system-ui, sans-serif; }
 a { color: var(--chair-accent); }
-a:focus-visible, summary:focus-visible { outline: 3px solid var(--chair-accent); outline-offset: 4px; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid var(--chair-accent); outline-offset: 4px; }
 .appbar { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; padding: 18px 32px; background: var(--background-color-surface-base); border-bottom: 1px solid var(--border-color-base); }
 .brand { font-size: 22px; font-weight: 800; letter-spacing: .12em; text-decoration: none; }
 .readonly { margin-left: auto; font-size: 13px; color: var(--color-text-secondary); }
@@ -43,7 +43,13 @@ h1 { font-size: clamp(26px, 4vw, 38px); line-height: 1.2; margin: 8px 0; }
 h2 { font-size: 20px; margin-bottom: 4px; }
 p { margin: 4px 0; }
 .page-header p:not(.eyebrow), .section-heading p, .refresh, footer, .muted { color: var(--color-text-secondary); }
-.button { border: 1px solid var(--border-color-base); border-radius: 6px; padding: 9px 16px; text-decoration: none; white-space: nowrap; background: var(--background-color-surface-base); }
+.button { border: 1px solid var(--border-color-base); border-radius: 6px; padding: 9px 16px; text-decoration: none; white-space: nowrap; background: var(--background-color-surface-base); color: var(--chair-accent); font: inherit; cursor: pointer; display: inline-block; }
+.button:disabled { opacity: .6; cursor: wait; }
+.resource-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; margin-bottom: 12px; }
+.resource-link { padding: 14px 18px; border: 1px solid var(--border-color-base); border-radius: 6px; background: var(--background-color-surface-base); text-decoration: none; overflow-wrap: anywhere; }
+.resource-link small { display: block; font-size: 12px; margin-top: 4px; }
+#client-token-panel { margin-top: 16px; }
+#client-token-value { display: block; padding: 12px; margin-bottom: 12px; border: 1px solid var(--border-color-base); border-radius: 6px; background: var(--background-color-surface-base); overflow-wrap: anywhere; }
 .refresh { font-size: 13px; margin: 20px 0; }
 .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .summary article { padding: 20px; border: 1px solid var(--border-color-base); border-radius: 8px; background: var(--background-color-surface-base); }

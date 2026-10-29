@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,17 +36,20 @@ type workerConnection struct {
 }
 
 type hub struct {
-	clientToken    string
-	workerTokens   map[string]string
-	mu             sync.Mutex
-	workers        map[string]*workerConnection
-	assignment     uint64
-	closed         bool
-	requests       chan struct{}
-	logger         *slog.Logger
-	requestID      atomic.Uint64
-	jobs           map[uint64]activeJob
-	dashboardToken string
+	clientToken            string
+	workerTokens           map[string]string
+	mu                     sync.Mutex
+	workers                map[string]*workerConnection
+	assignment             uint64
+	closed                 bool
+	requests               chan struct{}
+	logger                 *slog.Logger
+	requestID              atomic.Uint64
+	jobs                   map[uint64]activeJob
+	dashboardToken         string
+	dashboardPublic        bool
+	allowClientTokenReveal bool
+	downloadsRoot          *os.Root
 }
 
 func newHub(clientToken string, workerTokens map[string]string, maxConcurrentRequests int) *hub {

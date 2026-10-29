@@ -293,18 +293,103 @@ v2; a worker without a report shows unavailable details.
 Jobs are only requests routed through this hub, not engine-local work. They
 disappear on completion, failure, or cancellation; there is no job history.
 Prompts, tool arguments/results, generated text, and credentials are never
-included. Individual API-client identities are not tracked: this view lists
+included in job/status snapshots. Individual API-client identities are not tracked: this view lists
 GPU workers, not users sharing the client token.
 
-`GET /dashboard/status` provides the same read-only snapshot as JSON with the
-same Basic authentication. HTML, CSS, JavaScript, and JSON all require the dashboard
-credential. This credential cannot run inference, administer engines, or modify
-cluster membership. A small embedded same-origin script performs status updates;
+`GET /dashboard/status` provides the same read-only snapshot as JSON. By default,
+HTML, CSS, JavaScript, JSON, downloads, and the local setup guide all require the
+dashboard credential. The credential cannot directly run inference, administer
+engines, or modify cluster membership. Enabling token reveal below explicitly
+allows its holders to obtain inference access. A small embedded same-origin script performs status updates;
 there are no external assets, frontend build step, or cookie sessions.
 Browsers may retain Basic credentials until the browser session is closed; use
 a private browser session on shared machines. Token changes require a hub
 restart. Keep this experimental dashboard on trusted networks; worker/model
 names are operational metadata and should not be exposed publicly.
+
+#### Host downloads and the README on the hub
+
+The **Setup guide** link opens this executable's bundled README at
+`/dashboard/readme` as plain text. No GitHub connection or separate documentation
+server is needed. The bundled guide matches the hub build; archives you supply
+may be from a different build.
+
+To offer binary downloads, create a dedicated directory and copy the release
+archives and their matching `SHA256SUMS` into it yourself. For example:
+
+```bash
+mkdir -p /srv/chair/downloads
+# Copy your downloaded release archives and SHA256SUMS into this directory.
+```
+
+Add `--downloads-dir /srv/chair/downloads` to the hub command. The directory must
+already exist and be readable by the hub. Use an operator-controlled directory;
+do not grant write access to dashboard visitors or place deployment secrets there.
+No uploads, automatic GitHub downloads, or release publishing are performed.
+
+Only these exact filenames are offered, when present as regular files:
+
+```text
+chair-linux-amd64.tar.gz
+chair-linux-arm64.tar.gz
+chair-darwin-amd64.tar.gz
+chair-darwin-arm64.tar.gz
+chair-windows-amd64.zip
+chair-windows-arm64.zip
+SHA256SUMS
+```
+
+Links use `/dashboard/downloads/<filename>` on this hub. Arbitrary paths,
+directory indexes, and symlinks are not served. Changes appear on the next page
+load without restarting the hub. Publish complete files, preferably by atomic
+rename, and keep checksums consistent with the archives. The hub does not verify
+or sign supplied archives; clients should verify them against `SHA256SUMS`.
+
+#### Optional public dashboard
+
+Add **`--dashboard-public`** to permit the page, status snapshots, setup guide,
+and configured downloads without login. A dashboard token file is optional in
+this mode unless token reveal is also enabled. For example:
+
+```bash
+./chair hub \
+  --listen 0.0.0.0:443 \
+  --tls-cert hub.crt --tls-key hub.key \
+  --client-token-file client.token --workers-file workers.json \
+  --dashboard-public --downloads-dir /srv/chair/downloads
+```
+
+**This exposes worker IDs, hardware, model inventories, and active-job metadata
+to anyone who can reach the hub.** Limit network access accordingly. HTTPS is
+still required, and inference and worker connections still require their own
+credentials. Public mode never enables anonymous token reveal.
+
+#### Optional client-token reveal
+
+Client-token reveal is **disabled by default**. To allow trusted dashboard users
+to obtain the inference credential, configure both:
+
+```text
+--dashboard-token-file dashboard.token --allow-client-token-reveal
+```
+
+The dashboard then offers **Reveal client token**, **Copy token**, and **Hide
+token** controls. The token is fetched only after an explicit, authenticated,
+same-origin POST to `/dashboard/client-token`; it is not included in initial
+HTML, normal status snapshots, URLs, or logs. Responses disable caching. The
+display clears after one minute, when hidden manually, or when you leave the tab.
+JavaScript is required for these controls.
+
+On a public dashboard, use **Sign in for token access** (`/dashboard/access`)
+and the `chair` username/dashboard password before revealing. Anonymous visitors
+cannot retrieve the token even when the reveal option is enabled.
+
+**Anyone holding the dashboard credential can obtain inference access when this
+option is on.** Visual hiding is only a privacy aid: it does not revoke a revealed
+token, erase browser developer-tool records, or clear a copied clipboard. Protect
+dashboard credentials and use a private browser session on shared machines.
+Turning the option off requires a hub restart; rotate the client token and
+restart the hub if a revealed credential needs to be invalidated.
 
 ### Logging
 

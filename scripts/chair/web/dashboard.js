@@ -116,10 +116,70 @@
         event.preventDefault();
         live = !live;
         toggle.textContent = live ? 'Pause live refresh' : 'Resume live refresh';
-        toggle.href = live ? '/?refresh=off' : '/';
-        history.replaceState(null, '', live ? '/' : '/?refresh=off');
+        toggle.href = `${location.pathname}${live ? '?refresh=off' : ''}`;
+        history.replaceState(null, '', `${location.pathname}${live ? '' : '?refresh=off'}`);
         message();
         schedule();
     });
+    const revealButton = document.getElementById('reveal-token');
+    if (revealButton) {
+        const panel = document.getElementById('client-token-panel');
+        const value = document.getElementById('client-token-value');
+        const tokenStatus = document.getElementById('token-status');
+        let hideTimer;
+        let revealRequest;
+
+        function hideToken() {
+            clearTimeout(hideTimer);
+            if (revealRequest) revealRequest.abort();
+            value.textContent = '';
+            panel.hidden = true;
+            revealButton.setAttribute('aria-expanded', 'false');
+            tokenStatus.textContent = 'Token hidden.';
+        }
+
+        revealButton.addEventListener('click', async () => {
+            hideToken();
+            const controller = new AbortController();
+            revealRequest = controller;
+            revealButton.disabled = true;
+            tokenStatus.textContent = 'Requesting token…';
+            const deadline = setTimeout(() => controller.abort(), 10000);
+            try {
+                const response = await fetch('/dashboard/client-token', {
+                    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+                    headers: { 'X-Chair-Token-Reveal': '1' }, signal: controller.signal,
+                });
+                if (!response.ok) throw new Error('token unavailable');
+                const data = await response.json();
+                if (controller.signal.aborted || document.hidden) return;
+                if (typeof data.client_token !== 'string') throw new Error('invalid token response');
+                value.textContent = data.client_token;
+                panel.hidden = false;
+                revealButton.setAttribute('aria-expanded', 'true');
+                tokenStatus.textContent = 'Visible for one minute. Anyone with this token can run inference.';
+                hideTimer = setTimeout(hideToken, 60000);
+            } catch {
+                value.textContent = '';
+                panel.hidden = true;
+                tokenStatus.textContent = 'Token unavailable. Sign in again or check the hub configuration.';
+            } finally {
+                clearTimeout(deadline);
+                revealButton.disabled = false;
+            }
+        });
+        document.getElementById('hide-token').addEventListener('click', hideToken);
+        document.getElementById('copy-token').addEventListener('click', async () => {
+            if (panel.hidden) return;
+            try {
+                await navigator.clipboard.writeText(value.textContent);
+                tokenStatus.textContent = 'Token copied. Keep your clipboard private.';
+            } catch {
+                tokenStatus.textContent = 'Copy failed. Select the visible token manually.';
+            }
+        });
+        document.addEventListener('visibilitychange', () => { if (document.hidden) hideToken(); });
+        window.addEventListener('pagehide', hideToken);
+    }
     schedule();
 })();

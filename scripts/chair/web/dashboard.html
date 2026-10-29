@@ -12,9 +12,9 @@ SPDX-License-Identifier: Apache-2.0
     <script src="/dashboard/dashboard.js" defer></script>
 </head>
 <body data-live="{{.Live}}" data-updated="{{.GeneratedAt.Format "15:04:05 UTC"}}">
-    <header class="appbar"><a href="/" class="brand">CHAIR</a><span>Central Hub for AI Routing</span><span class="readonly">Read-only dashboard</span></header>
+    <header class="appbar"><a href="/" class="brand">CHAIR</a><span>Central Hub for AI Routing</span><span class="readonly">{{if .Public}}Public dashboard{{else}}Cluster dashboard{{end}}</span></header>
     <main>
-        <div class="page-header"><div><p class="eyebrow">Cluster overview</p><h1>A seat for every workload.</h1><p>Connected GPU workers, available models, and requests in flight.</p></div><nav class="actions" aria-label="Refresh controls"><a id="refresh-now" class="button" href="{{if .Live}}/{{else}}/?refresh=off{{end}}">Refresh overview</a><a id="toggle-live" class="button" href="{{if .Live}}/?refresh=off{{else}}/{{end}}">{{if .Live}}Pause live refresh{{else}}Resume live refresh{{end}}</a></nav></div>
+        <div class="page-header"><div><p class="eyebrow">Cluster overview</p><h1>A seat for every workload.</h1><p>Connected GPU workers, available models, and requests in flight.</p></div><nav class="actions" aria-label="Refresh controls"><a id="refresh-now" class="button" href="{{.PagePath}}{{if not .Live}}?refresh=off{{end}}">Refresh overview</a><a id="toggle-live" class="button" href="{{.PagePath}}{{if .Live}}?refresh=off{{end}}">{{if .Live}}Pause live refresh{{else}}Resume live refresh{{end}}</a></nav></div>
         <p id="refresh-status" class="refresh" role="status">{{if .Live}}Updates every 3 seconds without reloading{{else}}Live refresh paused{{end}} · Updated {{.GeneratedAt.Format "15:04:05 UTC"}}</p>
         <noscript><p>JavaScript is disabled. Use Refresh overview for a new snapshot; this page will not reload automatically.</p></noscript>
         <section class="summary" aria-label="Cluster summary">
@@ -35,6 +35,18 @@ SPDX-License-Identifier: Apache-2.0
                 {{range .Jobs}}<tr><th scope="row">#{{.ID}}</th><td><code>{{.WorkerID}}</code></td><td><code>{{.Model}}</code></td><td><code>{{.Path}}</code></td><td>{{.StartedAt.Format "15:04:05"}}</td><td>{{.Elapsed}}</td></tr>{{else}}<tr><td class="empty" colspan="6">No jobs in flight. Send a request to the hub's API to see its worker assignment here.</td></tr>{{end}}
             </tbody></table></div>
         </section>
+        <section aria-labelledby="downloads-heading">
+            <div class="section-heading"><h2 id="downloads-heading">Downloads &amp; setup</h2><p>Hosted on this hub. Check archives against SHA256SUMS before use; binaries are unsigned.</p></div>
+            <div class="resource-links"><a class="resource-link" href="/dashboard/readme">Setup guide <small>Bundled CHAIR README</small></a>{{range .Downloads}}<a class="resource-link" href="/dashboard/downloads/{{.Name}}">{{.Label}} <small>{{.Name}}</small></a>{{end}}</div>
+            {{if not .Downloads}}<p class="muted">{{if .DownloadsEnabled}}No release archives are available yet.{{else}}Binary downloads are not configured on this hub.{{end}}</p>{{end}}
+        </section>
+        {{if .RevealEnabled}}<section aria-labelledby="client-access-heading">
+            <div class="section-heading"><h2 id="client-access-heading">Client API access</h2><p>Revealing the client token grants inference access. Share it only with trusted users.</p></div>
+            {{if .Authenticated}}<button id="reveal-token" class="button" type="button" aria-controls="client-token-panel" aria-expanded="false">Reveal client token</button>
+            <div id="client-token-panel" hidden><p><code id="client-token-value"></code></p><div class="actions"><button id="copy-token" class="button" type="button">Copy token</button><button id="hide-token" class="button" type="button">Hide token</button></div></div>
+            <p id="token-status" class="muted" role="status">Hidden. Revealed tokens hide after one minute or when you leave this tab.</p>
+            {{else}}<a class="button" href="/dashboard/access">Sign in for token access</a><p class="muted">Dashboard credentials are required, even on a public dashboard.</p>{{end}}
+        </section>{{end}}
         <footer>Jobs disappear when their requests finish, fail, or are canceled. Engine-local work and individual API-client identities are not tracked.</footer>
     </main>
 </body>

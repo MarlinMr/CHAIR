@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-//go:embed web/dashboard.html web/dashboard.css web/dashboard.js
+//go:embed web/dashboard.html web/dashboard.css web/dashboard.js README.md
 var dashboardAssets embed.FS
 
 var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "web/dashboard.html"))
@@ -47,15 +47,21 @@ type dashboardWorker struct {
 }
 
 type dashboardView struct {
-	GeneratedAt time.Time         `json:"generated_at"`
-	Authorized  int               `json:"authorized_workers"`
-	Connected   int               `json:"connected_workers"`
-	Ready       int               `json:"ready_workers"`
-	Models      int               `json:"available_models"`
-	Limit       int               `json:"max_concurrent_requests"`
-	Workers     []dashboardWorker `json:"workers"`
-	Jobs        []dashboardJob    `json:"jobs"`
-	Live        bool              `json:"-"`
+	GeneratedAt      time.Time           `json:"generated_at"`
+	Authorized       int                 `json:"authorized_workers"`
+	Connected        int                 `json:"connected_workers"`
+	Ready            int                 `json:"ready_workers"`
+	Models           int                 `json:"available_models"`
+	Limit            int                 `json:"max_concurrent_requests"`
+	Workers          []dashboardWorker   `json:"workers"`
+	Jobs             []dashboardJob      `json:"jobs"`
+	Live             bool                `json:"-"`
+	PagePath         string              `json:"-"`
+	Public           bool                `json:"-"`
+	RevealEnabled    bool                `json:"-"`
+	Authenticated    bool                `json:"-"`
+	Downloads        []dashboardDownload `json:"-"`
+	DownloadsEnabled bool                `json:"-"`
 }
 
 func (h *hub) enableDashboard(token string) error {
@@ -86,8 +92,17 @@ func sameDashboardOrigin(origin, host string) bool {
 	return strings.EqualFold(parsed.Hostname(), expected.Hostname()) && port(parsed) == port(&expected)
 }
 
+func (h *hub) dashboardAuthenticated(r *http.Request) bool {
+	name, password, ok := r.BasicAuth()
+	expected := sha256.Sum256([]byte(h.dashboardToken))
+	actual := sha256.Sum256([]byte(password))
+	return h.dashboardToken != "" && ok && name == "chair" && subtle.ConstantTimeCompare(expected[:], actual[:]) == 1
+}
+
 func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Vary", "Authorization")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
@@ -95,29 +110,57 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "TLS required", http.StatusForbidden)
 		return
 	}
-	if h.dashboardToken == "" {
+	if h.dashboardToken == "" && !h.dashboardPublic {
 		http.NotFound(w, r)
 		return
 	}
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "read-only dashboard", http.StatusMethodNotAllowed)
+	reveal := r.URL.Path == "/dashboard/client-token"
+	access := r.URL.Path == "/dashboard/access"
+	if (reveal || access) && !h.allowClientTokenReveal {
+		http.NotFound(w, r)
 		return
 	}
-	paused := r.URL.Path == "/" && r.URL.RawQuery == "refresh=off"
-	if (r.URL.RawQuery != "" && !paused) || (r.Header.Get("Origin") != "" && !sameDashboardOrigin(r.Header.Get("Origin"), r.Host)) || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+	method := http.MethodGet
+	if reveal {
+		method = http.MethodPost
+	}
+	if r.Method != method {
+		w.Header().Set("Allow", method)
+		http.Error(w, "unsupported dashboard method", http.StatusMethodNotAllowed)
+		return
+	}
+	paused := (r.URL.Path == "/" || access) && r.URL.RawQuery == "refresh=off"
+	publicNavigation := h.dashboardPublic && !reveal && !access && r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
+	crossSite := r.Header.Get("Sec-Fetch-Site") == "cross-site" && !publicNavigation
+	if (r.URL.RawQuery != "" && !paused) || (r.Header.Get("Origin") != "" && !sameDashboardOrigin(r.Header.Get("Origin"), r.Host)) || crossSite {
 		http.Error(w, "cross-origin requests and unsupported query strings are not accepted", http.StatusForbidden)
 		return
 	}
-	name, password, ok := r.BasicAuth()
-	expected := sha256.Sum256([]byte(h.dashboardToken))
-	actual := sha256.Sum256([]byte(password))
-	if !ok || name != "chair" || subtle.ConstantTimeCompare(expected[:], actual[:]) != 1 {
+	if reveal && (r.Header.Get("Origin") == "" || r.Header.Get("X-Chair-Token-Reveal") != "1") {
+		http.Error(w, "explicit same-origin reveal required", http.StatusForbidden)
+		return
+	}
+	authenticated := h.dashboardAuthenticated(r)
+	if (!h.dashboardPublic || reveal || access) && !authenticated {
 		w.Header().Set("WWW-Authenticate", `Basic realm="CHAIR dashboard", charset="UTF-8"`)
 		http.Error(w, "dashboard authentication required", http.StatusUnauthorized)
 		return
 	}
 	switch r.URL.Path {
+	case "/dashboard/client-token":
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			ClientToken string `json:"client_token"`
+		}{ClientToken: h.clientToken})
+	case "/dashboard/readme":
+		guide, err := dashboardAssets.ReadFile("README.md")
+		if err != nil {
+			http.Error(w, "setup guide unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `inline; filename="README.md"`)
+		_, _ = w.Write(guide)
 	case "/dashboard/dashboard.js":
 		script, err := dashboardAssets.ReadFile("web/dashboard.js")
 		if err != nil {
@@ -137,10 +180,16 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 	case "/dashboard/status":
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(h.dashboardSnapshot())
-	case "/":
+	case "/", "/dashboard/access":
 		var page bytes.Buffer
 		view := h.dashboardSnapshot()
 		view.Live = !paused
+		view.PagePath = r.URL.Path
+		view.Public = h.dashboardPublic
+		view.RevealEnabled = h.allowClientTokenReveal
+		view.Authenticated = authenticated
+		view.Downloads = h.dashboardDownloads()
+		view.DownloadsEnabled = h.downloadsRoot != nil
 		if err := dashboardTemplate.Execute(&page, view); err != nil {
 			http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
 			return
@@ -148,6 +197,10 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(page.Bytes())
 	default:
+		if strings.HasPrefix(r.URL.Path, "/dashboard/downloads/") {
+			h.serveDownload(w, r)
+			return
+		}
 		http.NotFound(w, r)
 	}
 }

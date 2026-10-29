@@ -63,6 +63,9 @@ func runHub(ctx context.Context, args []string) error {
 	maxConcurrentRequests := flags.Int("max-concurrent-requests", defaultMaxConcurrentRequests, "maximum simultaneous inference requests across all workers (must be positive)")
 	logLevel := flags.String("log-level", "info", "logging verbosity: debug, info, warn, or error")
 	dashboardPath := flags.String("dashboard-token-file", "", "enable read-only web dashboard using a separate token file")
+	dashboardPublic := flags.Bool("dashboard-public", false, "allow dashboard, setup guide, and downloads without login; inference remains authenticated")
+	downloadsDir := flags.String("downloads-dir", "", "directory of manually provisioned CHAIR release archives and SHA256SUMS")
+	allowTokenReveal := flags.Bool("allow-client-token-reveal", false, "allow dashboard-authenticated users to explicitly reveal the inference client token")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -101,6 +104,18 @@ func runHub(ctx context.Context, args []string) error {
 			return err
 		}
 		logger.Info("read-only dashboard enabled", "path", "/")
+	}
+	if err := h.configureDashboard(*dashboardPublic, *allowTokenReveal, *downloadsDir); err != nil {
+		return err
+	}
+	if h.downloadsRoot != nil {
+		defer h.downloadsRoot.Close()
+	}
+	if h.dashboardPublic {
+		logger.Warn("public dashboard enabled", "path", "/")
+	}
+	if h.allowClientTokenReveal {
+		logger.Warn("client-token reveal enabled; dashboard credentials grant inference access")
 	}
 	defer h.Close()
 	server := &http.Server{

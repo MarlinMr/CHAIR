@@ -3,7 +3,7 @@
 
 import { test, expect, request } from '@playwright/test';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
@@ -30,6 +30,9 @@ test.beforeAll(async () => {
     for (const [name, content] of Object.entries({ 'client.token': clientToken, 'worker.token': workerToken, 'dashboard.token': password, 'workers.json': JSON.stringify({ workers: [{ id: 'gpu-test', token: workerToken }] }) })) {
         await writeFile(join(directory, name), content, { mode: 0o600 });
     }
+    await mkdir(join(directory, 'downloads'), { mode: 0o700 });
+    await writeFile(join(directory, 'downloads', 'chair-linux-amd64.tar.gz'), 'browser-test archive', { mode: 0o600 });
+    await writeFile(join(directory, 'downloads', 'SHA256SUMS'), 'browser-test checksums', { mode: 0o600 });
     engine = createServer((req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(req.url === '/api/tags' ? { models: [{ name: 'test-model:latest' }] } : {}));
@@ -40,7 +43,7 @@ test.beforeAll(async () => {
     await new Promise(done => reservation.close(done));
     url = `https://127.0.0.1:${port}`;
     const launch = args => spawn(resolve(binary), args, { cwd: directory, stdio: 'ignore' });
-    hubProcess = launch(['hub', '--listen', `127.0.0.1:${port}`, '--tls-cert', 'hub.crt', '--tls-key', 'hub.key', '--client-token-file', 'client.token', '--workers-file', 'workers.json', '--dashboard-token-file', 'dashboard.token']);
+    hubProcess = launch(['hub', '--listen', `127.0.0.1:${port}`, '--tls-cert', 'hub.crt', '--tls-key', 'hub.key', '--client-token-file', 'client.token', '--workers-file', 'workers.json', '--dashboard-token-file', 'dashboard.token', '--dashboard-public', '--allow-client-token-reveal', '--downloads-dir', 'downloads']);
     api = await request.newContext({ ignoreHTTPSErrors: true, httpCredentials: { username: 'chair', password } });
     await expect.poll(async () => {
         try { return (await api.get(url)).status(); } catch { return 0; }
@@ -131,4 +134,65 @@ test('worker tables scroll within a narrow viewport', async ({ page }) => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await expect(page.locator('#toggle-live')).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('dashboard-mobile.png'), fullPage: true });
+});
+
+test('anonymous visitors can view setup and downloads but cannot reveal tokens', async ({ browser }) => {
+    const anonymous = await browser.newContext({ ignoreHTTPSErrors: true, httpCredentials: undefined });
+    try {
+        const page = await anonymous.newPage();
+        await page.goto(url);
+
+        await expect(page.getByRole('link', { name: 'Sign in for token access' })).toBeVisible();
+        await expect(page.locator('#reveal-token')).toHaveCount(0);
+        expect(await page.content()).not.toContain(clientToken);
+        const denied = await anonymous.request.post(`${url}/dashboard/client-token`, { headers: { Origin: url, 'X-Chair-Token-Reveal': '1' } });
+        expect(denied.status()).toBe(401);
+
+        const pending = page.waitForEvent('download');
+        await page.getByRole('link', { name: /Linux · x64/ }).click();
+        const download = await pending;
+        expect(download.suggestedFilename()).toBe('chair-linux-amd64.tar.gz');
+        const saved = test.info().outputPath('downloaded-archive.tar.gz');
+        await download.saveAs(saved);
+        expect(await readFile(saved, 'utf8')).toBe('browser-test archive');
+
+        await page.getByRole('link', { name: /Setup guide/ }).click();
+        await expect(page).toHaveURL(`${url}/dashboard/readme`);
+        await expect(page.locator('body')).toContainText('Generate a TLS certificate for testing');
+    } finally {
+        await anonymous.close();
+    }
+});
+
+test('authenticated users explicitly reveal, copy, and hide the client token', async ({ page }) => {
+    let reveals = 0;
+    page.on('request', req => { if (req.url().endsWith('/dashboard/client-token')) reveals++; });
+    await page.goto(`${url}/dashboard/access?refresh=off`);
+    await expect(page.locator('#reveal-token')).toBeVisible();
+    expect(await page.content()).not.toContain(clientToken);
+    expect(reveals).toBe(0);
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+
+    await page.locator('#reveal-token').click();
+
+    await expect(page.locator('#client-token-value')).toHaveText(clientToken);
+    expect(reveals).toBe(1);
+    await page.locator('#copy-token').click();
+    await expect(page.locator('#token-status')).toContainText('Token copied');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(clientToken);
+    await page.locator('#refresh-now').click();
+    await expect(page.locator('#refresh-status')).toContainText('Live refresh paused');
+    expect(reveals).toBe(1);
+    await page.locator('#hide-token').click();
+    await expect(page.locator('#client-token-value')).toBeEmpty();
+    await expect(page.locator('#client-token-panel')).toBeHidden();
+
+    await page.clock.install();
+    await page.locator('#reveal-token').click();
+    await expect(page.locator('#client-token-value')).toHaveText(clientToken);
+    await page.clock.fastForward(61000);
+    await expect(page.locator('#client-token-value')).toBeEmpty();
+    await expect(page.locator('#client-token-panel')).toBeHidden();
+    const snapshot = await (await api.get(`${url}/dashboard/status`)).json();
+    expect(JSON.stringify(snapshot)).not.toContain(clientToken);
 });
