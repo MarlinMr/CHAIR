@@ -1,0 +1,40 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {{if .Live}}<meta http-equiv="refresh" content="3">{{end}}
+    <title>CHAIR · Cluster overview</title>
+    <link rel="stylesheet" href="/dashboard/style.css">
+</head>
+<body>
+    <header class="appbar"><a href="/" class="brand">CHAIR</a><span>Central Hub for AI Routing</span><span class="readonly">Read-only dashboard</span></header>
+    <main>
+        <div class="page-header"><div><p class="eyebrow">Cluster overview</p><h1>A seat for every workload.</h1><p>Connected GPU workers, available models, and requests in flight.</p></div><nav class="actions" aria-label="Refresh controls"><a class="button" href="{{if .Live}}/{{else}}/?refresh=off{{end}}">Refresh overview</a><a class="button" href="{{if .Live}}/?refresh=off{{else}}/{{end}}">{{if .Live}}Pause live refresh{{else}}Resume live refresh{{end}}</a></nav></div>
+        <p class="refresh">{{if .Live}}Refreshes every 3 seconds{{else}}Live refresh paused{{end}} · Updated {{.GeneratedAt.Format "15:04:05 UTC"}}</p>
+        <section class="summary" aria-label="Cluster summary">
+            <article><p>Connected workers</p><strong>{{.Connected}} <small>/ {{.Authorized}}</small></strong></article>
+            <article><p>Fresh inventories</p><strong>{{.Ready}}</strong></article>
+            <article><p>Available models</p><strong>{{.Models}}</strong></article>
+            <article><p>Jobs in flight</p><strong>{{len .Jobs}} <small>/ {{.Limit}}</small></strong></article>
+        </section>
+        <section aria-labelledby="workers-heading">
+            <div class="section-heading"><h2 id="workers-heading">GPU workers</h2><p>All authorized workers, including disconnected machines.</p></div>
+            <div class="table-scroll"><table><caption class="sr-only">Worker connections and fresh model inventories</caption><thead><tr><th scope="col">Worker</th><th scope="col">Status</th><th scope="col">Available models</th><th scope="col">In flight</th><th scope="col">Inventory age</th></tr></thead><tbody>
+                {{range .Workers}}<tr><th scope="row"><code>{{.ID}}</code></th><td><span class="badge {{.StatusClass}}">{{.Status}}</span></td><td>{{if .Models}}<details><summary>{{len .Models}} models</summary><ul class="model-list">{{range .Models}}<li><code>{{.}}</code></li>{{end}}</ul></details>{{else}}<span class="muted">No fresh models</span>{{end}}</td><td>{{.Inflight}}</td><td>{{.InventoryAge}}</td></tr>{{else}}<tr><td colspan="5">No workers are authorized. Add worker IDs to the hub configuration and restart it.</td></tr>{{end}}
+            </tbody></table></div>
+        </section>
+        <section aria-labelledby="jobs-heading">
+            <div class="section-heading"><h2 id="jobs-heading">Active jobs</h2><p>Requests routed through this hub. No prompts or generated text are shown.</p></div>
+            <div class="table-scroll"><table><caption class="sr-only">Requests currently assigned to workers</caption><thead><tr><th scope="col">Request</th><th scope="col">Worker</th><th scope="col">Model</th><th scope="col">API route</th><th scope="col">Started (UTC)</th><th scope="col">Elapsed</th></tr></thead><tbody>
+                {{range .Jobs}}<tr><th scope="row">#{{.ID}}</th><td><code>{{.WorkerID}}</code></td><td><code>{{.Model}}</code></td><td><code>{{.Path}}</code></td><td>{{.StartedAt.Format "15:04:05"}}</td><td>{{.Elapsed}}</td></tr>{{else}}<tr><td class="empty" colspan="6">No jobs in flight. Send a request to the hub's API to see its worker assignment here.</td></tr>{{end}}
+            </tbody></table></div>
+        </section>
+        <footer>Jobs disappear when their requests finish, fail, or are canceled. Engine-local work and individual API-client identities are not tracked.</footer>
+    </main>
+</body>
+</html>

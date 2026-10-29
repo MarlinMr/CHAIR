@@ -33,15 +33,17 @@ type workerConnection struct {
 }
 
 type hub struct {
-	clientToken  string
-	workerTokens map[string]string
-	mu           sync.Mutex
-	workers      map[string]*workerConnection
-	assignment   uint64
-	closed       bool
-	requests     chan struct{}
-	logger       *slog.Logger
-	requestID    atomic.Uint64
+	clientToken    string
+	workerTokens   map[string]string
+	mu             sync.Mutex
+	workers        map[string]*workerConnection
+	assignment     uint64
+	closed         bool
+	requests       chan struct{}
+	logger         *slog.Logger
+	requestID      atomic.Uint64
+	jobs           map[uint64]activeJob
+	dashboardToken string
 }
 
 func newHub(clientToken string, workerTokens map[string]string, maxConcurrentRequests int) *hub {
@@ -51,10 +53,15 @@ func newHub(clientToken string, workerTokens map[string]string, maxConcurrentReq
 		workers:      make(map[string]*workerConnection),
 		requests:     make(chan struct{}, maxConcurrentRequests),
 		logger:       slog.Default(),
+		jobs:         make(map[uint64]activeJob),
 	}
 }
 
 func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/dashboard/") {
+		h.serveDashboard(w, r)
+		return
+	}
 	// This experiment requires end-to-end TLS, even behind a reverse proxy.
 	// Forwarded headers are not an authentication or transport-security signal.
 	if r.TLS == nil || r.Header.Get("Origin") != "" {

@@ -40,6 +40,8 @@ stream and cancels the local engine request without closing other streams.
 - Ollama-native `POST /api/generate`, `POST /api/chat`, and `GET /api/tags`.
 - OpenAI-compatible `POST /v1/chat/completions` and `GET /v1/models`, including
   chat streaming and transparent tool-call forwarding to Ollama's own API.
+- Optional read-only HTTPS dashboard showing worker connections, fresh model
+  inventories, and active hub-routed jobs, protected by a separate credential.
 - End-to-end TLS to the hub, with system trust or an additional CA file.
 - Operator-provisioned identities and a distinct bearer token for each worker,
   separate from the client token. One live connection per authorized identity;
@@ -164,6 +166,63 @@ Start the hub, explicitly binding the appropriate reachable interface:
   --max-concurrent-requests 128
 ```
 
+### Web dashboard on port 443
+
+The dashboard is disabled by default. Generate a **separate** dashboard token;
+it must not match the client token or any worker token:
+
+```bash
+umask 077
+openssl rand -hex 32 > dashboard.token
+```
+
+Add `--dashboard-token-file dashboard.token` to the hub command. To serve both
+the dashboard and API on standard HTTPS port 443:
+
+```bash
+./chair hub \
+  --listen 0.0.0.0:443 \
+  --tls-cert hub.crt --tls-key hub.key \
+  --client-token-file client.token --workers-file workers.json \
+  --dashboard-token-file dashboard.token \
+  --max-concurrent-requests 128
+```
+
+Open **`https://hub.example.internal/`** and use the browser's login prompt:
+
+- **Username:** `chair`
+- **Password:** the contents of `dashboard.token`.
+
+Use a certificate trusted by the browser for that hostname. Port 443 may require
+an OS-specific low-port binding permission; prefer granting only that permission
+to the service rather than running the entire hub as root. You can keep port
+8443 instead and visit `https://hub.example.internal:8443/`. `--listen` controls
+the single shared listener: update workers' `--hub` and inference-client base
+URLs when changing its port. TLS must terminate at CHAIR; plain HTTP behind a
+TLS-terminating reverse proxy is not accepted.
+
+The page shows every authorized worker, including disconnected machines, fresh
+model inventories, and active requests with their worker, model, API route,
+start time, and elapsed duration. It refreshes every three seconds; **Pause live
+refresh** lets you inspect or expand model lists without the page reloading.
+Models from stale or failed inventories are not shown as available. A healthy
+empty inventory can be Ready while advertising no models.
+
+Jobs are only requests routed through this hub, not engine-local work. They
+disappear on completion, failure, or cancellation; there is no job history.
+Prompts, tool arguments/results, generated text, and credentials are never
+included. Individual API-client identities are not tracked: this view lists
+GPU workers, not users sharing the client token.
+
+`GET /dashboard/status` provides the same read-only snapshot as JSON with the
+same Basic authentication. HTML, CSS, and JSON all require the dashboard
+credential. This credential cannot run inference, administer engines, or modify
+cluster membership. No JavaScript, external assets, or cookie sessions are used.
+Browsers may retain Basic credentials until the browser session is closed; use
+a private browser session on shared machines. Token changes require a hub
+restart. Keep this experimental dashboard on trusted networks; worker/model
+names are operational metadata and should not be exposed publicly.
+
 ### Logging
 
 Both commands accept `--log-level debug|info|warn|error` (default `info`). Logs are
@@ -243,7 +302,8 @@ curl --no-buffer --cacert private-ca.crt \
 The command shows the header syntax, but shell-expanded tokens can be visible in
 process arguments. For sensitive environments, configure the client to read its
 authorization header from a protected file instead. Browser clients are not
-supported; the hub rejects requests with an `Origin` header.
+supported for inference; the hub rejects inference requests with an `Origin`
+header. The separately authenticated dashboard supports same-origin browsers.
 
 ## OpenAI-compatible clients and OpenCode
 

@@ -62,6 +62,7 @@ func runHub(ctx context.Context, args []string) error {
 	workersPath := flags.String("workers-file", "", "JSON file of authorized worker IDs and distinct bearer tokens")
 	maxConcurrentRequests := flags.Int("max-concurrent-requests", defaultMaxConcurrentRequests, "maximum simultaneous inference requests across all workers (must be positive)")
 	logLevel := flags.String("log-level", "info", "logging verbosity: debug, info, warn, or error")
+	dashboardPath := flags.String("dashboard-token-file", "", "enable read-only web dashboard using a separate token file")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -91,6 +92,16 @@ func runHub(ctx context.Context, args []string) error {
 	}
 	h := newHub(clientToken, workerTokens, *maxConcurrentRequests)
 	h.logger = logger
+	if *dashboardPath != "" {
+		token, err := tokenFile(*dashboardPath)
+		if err != nil {
+			return fmt.Errorf("dashboard token: %w", err)
+		}
+		if err := h.enableDashboard(token); err != nil {
+			return err
+		}
+		logger.Info("read-only dashboard enabled", "path", "/")
+	}
 	defer h.Close()
 	server := &http.Server{
 		Addr:              *listen,

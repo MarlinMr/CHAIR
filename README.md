@@ -14,6 +14,9 @@ The hub matches requests to advertised Ollama models and distributes concurrent
 work among eligible workers. Clients can use the OpenAI-compatible Chat
 Completions API at the hub's `/v1` base URL; see the setup guide for OpenCode V2
 configuration and the supported API subset.
+An optional authenticated web dashboard shows workers, their models, and active
+jobs at the hub's HTTPS address (`--dashboard-token-file`; use `--listen :443`
+for standard HTTPS).
 
 **Experimental:** CHAIR is currently a standalone headless Go tool in
 [`scripts/chair/`](scripts/chair/README.md), with `chair hub` and `chair worker`

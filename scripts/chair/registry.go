@@ -257,20 +257,25 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := h.reserveWorker(request.Model)
-	logger := h.logger.With("request_id", h.requestID.Add(1), "model", request.Model, "method", r.Method, "path", r.URL.Path)
+	requestID := h.requestID.Add(1)
+	logger := h.logger.With("request_id", requestID, "model", request.Model, "method", r.Method, "path", r.URL.Path)
 	if worker == nil {
 		logger.Warn("inference rejected", "reason", "no_eligible_worker")
 		writeAPIError(w, r, http.StatusBadGateway, "no connected worker advertises the requested model", "model_unavailable")
 		return
 	}
+	started := time.Now()
+	h.mu.Lock()
+	h.jobs[requestID] = activeJob{ID: requestID, WorkerID: worker.id, Model: request.Model, Path: r.URL.Path, StartedAt: started.UTC()}
+	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
 		worker.inflight--
+		delete(h.jobs, requestID)
 		h.mu.Unlock()
 	}()
 	logger = logger.With("worker_id", worker.id)
 	logger.Debug("inference dispatched")
-	started := time.Now()
 	logged := &requestLogWriter{ResponseWriter: w}
 	finished := false
 	defer func() {
