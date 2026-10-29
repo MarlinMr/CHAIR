@@ -61,9 +61,15 @@ func runHub(ctx context.Context, args []string) error {
 	clientPath := flags.String("client-token-file", "", "inference client bearer token file")
 	workersPath := flags.String("workers-file", "", "JSON file of authorized worker IDs and distinct bearer tokens")
 	maxConcurrentRequests := flags.Int("max-concurrent-requests", defaultMaxConcurrentRequests, "maximum simultaneous inference requests across all workers (must be positive)")
+	logLevel := flags.String("log-level", "info", "logging verbosity: debug, info, warn, or error")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	logger, err := commandLogger(*logLevel, os.Stderr)
+	if err != nil {
+		return err
+	}
+	logger = logger.With("role", "hub")
 	if *maxConcurrentRequests < 1 {
 		return fmt.Errorf("--max-concurrent-requests must be positive")
 	}
@@ -84,6 +90,7 @@ func runHub(ctx context.Context, args []string) error {
 		return err
 	}
 	h := newHub(clientToken, workerTokens, *maxConcurrentRequests)
+	h.logger = logger
 	defer h.Close()
 	server := &http.Server{
 		Addr:              *listen,
@@ -96,7 +103,7 @@ func runHub(ctx context.Context, args []string) error {
 	}
 	stop := context.AfterFunc(ctx, func() { _ = h.Close(); _ = server.Close() })
 	defer stop()
-	slog.Info("starting experimental CHAIR TLS hub", "listen", *listen, "max_concurrent_requests", *maxConcurrentRequests)
+	logger.Info("starting experimental CHAIR TLS hub", "listen", *listen, "max_concurrent_requests", *maxConcurrentRequests, "authorized_workers", len(workerTokens))
 	if err := server.ListenAndServeTLS(*cert, *key); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("cannot serve hub; check listen address and TLS files")
 	}
@@ -110,9 +117,15 @@ func runWorker(ctx context.Context, args []string) error {
 	id := flags.String("worker-id", "", "stable worker ID authorized in the hub's workers file")
 	engine := flags.String("engine", "http://127.0.0.1:11434", "local Ollama engine URL (literal loopback address only)")
 	ca := flags.String("ca-file", "", "additional trusted PEM CA certificates for the hub")
+	logLevel := flags.String("log-level", "info", "logging verbosity: debug, info, warn, or error")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	logger, err := commandLogger(*logLevel, os.Stderr)
+	if err != nil {
+		return err
+	}
+	logger = logger.With("role", "worker")
 	if flags.NArg() != 0 {
 		return fmt.Errorf("worker accepts no positional arguments")
 	}
@@ -157,15 +170,15 @@ func runWorker(ctx context.Context, args []string) error {
 	delay := time.Second
 	for ctx.Err() == nil {
 		started := time.Now()
-		slog.Info("connecting experimental CHAIR worker")
-		_ = connectToHub(ctx, client, u, *id, token, target)
+		logger.Info("connecting experimental CHAIR worker", "worker_id", *id)
+		_ = connectToHub(ctx, client, u, *id, token, target, logger)
 		if ctx.Err() != nil {
 			break
 		}
 		if time.Since(started) > time.Minute {
 			delay = time.Second
 		}
-		slog.Warn("worker disconnected; retrying", "delay", delay)
+		logger.Warn("worker disconnected; retrying", "worker_id", *id, "delay", delay)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():

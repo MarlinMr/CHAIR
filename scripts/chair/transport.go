@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -60,7 +61,7 @@ func inferenceHeaders(in http.Header) http.Header {
 	return out
 }
 
-func inferenceProxy(target *url.URL, transport http.RoundTripper) *httputil.ReverseProxy {
+func inferenceProxy(target *url.URL, transport http.RoundTripper, logger *slog.Logger) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
@@ -70,7 +71,10 @@ func inferenceProxy(target *url.URL, transport http.RoundTripper) *httputil.Reve
 		Transport:     transport,
 		FlushInterval: -1,
 		ErrorLog:      log.New(io.Discard, "", 0),
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, _ error) {
+			if r.Context().Err() == nil {
+				logger.Warn("inference forwarding failed", "reason", "upstream_connection_failed")
+			}
 			http.Error(w, "inference connection failed", http.StatusBadGateway)
 		},
 	}
@@ -150,10 +154,10 @@ func (s sessionListener) Addr() net.Addr {
 	return s.Session.LocalAddr()
 }
 
-func serveEngine(ctx context.Context, session *yamux.Session, target *url.URL) error {
+func serveEngine(ctx context.Context, session *yamux.Session, target *url.URL, logger *slog.Logger) error {
 	transport := localTransport()
 	defer transport.CloseIdleConnections()
-	proxy := inferenceProxy(target, transport)
+	proxy := inferenceProxy(target, transport, logger)
 	server := &http.Server{
 		ReadHeaderTimeout: connectionTimeout,
 		MaxHeaderBytes:    64 << 10,

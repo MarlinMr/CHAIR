@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -24,6 +25,13 @@ const (
 	maxInventoryBytes = 1 << 20
 	maxModels         = 4096
 )
+
+type inventoryFailure struct {
+	reason string
+	status int
+}
+
+func (e *inventoryFailure) Error() string { return e.reason }
 
 func canonicalModel(name string) string {
 	if strings.Contains(name, "@") || strings.LastIndex(name, ":") > strings.LastIndex(name, "/") {
@@ -49,7 +57,7 @@ func validModel(name string) bool {
 func fetchInventory(ctx context.Context, worker *workerConnection) (map[string]json.RawMessage, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://worker/api/tags", nil)
 	if err != nil {
-		return nil, err
+		return nil, &inventoryFailure{reason: "inventory_request_failed"}
 	}
 	client := &http.Client{
 		Transport:     worker.transport,
@@ -57,21 +65,21 @@ func fetchInventory(ctx context.Context, worker *workerConnection) (map[string]j
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, &inventoryFailure{reason: "engine_unreachable"}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, errors.New("engine inventory unavailable")
+		return nil, &inventoryFailure{reason: "inventory_http_error", status: response.StatusCode}
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxInventoryBytes+1))
 	if err != nil || len(body) > maxInventoryBytes {
-		return nil, errors.New("engine inventory unreadable or oversized")
+		return nil, &inventoryFailure{reason: "inventory_unreadable_or_oversized"}
 	}
 	var inventory struct {
 		Models *[]json.RawMessage `json:"models"`
 	}
 	if err := json.Unmarshal(body, &inventory); err != nil || inventory.Models == nil || len(*inventory.Models) > maxModels {
-		return nil, errors.New("invalid engine inventory")
+		return nil, &inventoryFailure{reason: "invalid_inventory"}
 	}
 	models := make(map[string]json.RawMessage, len(*inventory.Models))
 	for _, raw := range *inventory.Models {
@@ -79,7 +87,7 @@ func fetchInventory(ctx context.Context, worker *workerConnection) (map[string]j
 			Name string `json:"name"`
 		}
 		if err := json.Unmarshal(raw, &model); err != nil || !validModel(model.Name) {
-			return nil, errors.New("invalid engine model")
+			return nil, &inventoryFailure{reason: "invalid_inventory_model"}
 		}
 		models[canonicalModel(model.Name)] = raw
 	}
@@ -91,17 +99,55 @@ func (h *hub) refreshInventory(parent context.Context, worker *workerConnection)
 	defer cancel()
 	models, err := fetchInventory(ctx, worker)
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.closed || h.workers[worker.id] != worker {
+	if h.closed || h.workers[worker.id] != worker || parent.Err() != nil {
+		h.mu.Unlock()
 		return
 	}
+	wasFailed := worker.inventoryFailed
+	hadInventory := !worker.updatedAt.IsZero()
+	changed := !sameInventory(worker.models, models)
 	// Failed or malformed reports withdraw all capabilities until a good report
 	// arrives. Do not keep routing against a cached positive inventory forever.
 	worker.models = models
+	worker.inventoryFailed = err != nil
 	worker.updatedAt = time.Time{}
 	if err == nil {
 		worker.updatedAt = time.Now()
 	}
+	h.mu.Unlock()
+	if err != nil {
+		reason, status := "inventory_failed", 0
+		var failure *inventoryFailure
+		if errors.As(err, &failure) {
+			reason, status = failure.reason, failure.status
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			reason = "inventory_timeout"
+		}
+		level := slog.LevelWarn
+		if wasFailed {
+			level = slog.LevelDebug
+		}
+		h.logger.LogAttrs(parent, level, "worker inventory unavailable", slog.String("worker_id", worker.id), slog.String("reason", reason), slog.Int("status", status))
+	} else if wasFailed {
+		h.logger.Info("worker inventory recovered", "worker_id", worker.id, "models", len(models))
+	} else if !hadInventory || changed {
+		h.logger.Info("worker inventory updated", "worker_id", worker.id, "models", len(models))
+	} else {
+		h.logger.Debug("worker inventory refreshed", "worker_id", worker.id, "models", len(models))
+	}
+}
+
+func sameInventory(left, right map[string]json.RawMessage) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for name, raw := range left {
+		if !bytes.Equal(raw, right[name]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (w *workerConnection) ready(now time.Time) bool {
@@ -197,7 +243,9 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := h.reserveWorker(request.Model)
+	logger := h.logger.With("request_id", h.requestID.Add(1), "model", request.Model, "method", r.Method, "path", r.URL.Path)
 	if worker == nil {
+		logger.Warn("inference rejected", "reason", "no_eligible_worker")
 		http.Error(w, "no connected worker advertises the requested model", http.StatusBadGateway)
 		return
 	}
@@ -206,11 +254,30 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 		worker.inflight--
 		h.mu.Unlock()
 	}()
+	logger = logger.With("worker_id", worker.id)
+	logger.Debug("inference dispatched")
+	started := time.Now()
+	logged := &requestLogWriter{ResponseWriter: w}
+	finished := false
+	defer func() {
+		outcome := "completed"
+		switch {
+		case r.Context().Err() != nil:
+			outcome = "canceled"
+		case !finished:
+			outcome = "interrupted"
+			logger.Warn("inference interrupted", "reason", "stream_interrupted")
+		case logged.status >= http.StatusBadRequest:
+			outcome = "failed"
+		}
+		logger.Debug("inference finished", "outcome", outcome, "status", logged.status, "duration_ms", time.Since(started).Milliseconds(), "response_bytes", logged.bytes)
+	}()
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 	r.TransferEncoding = nil
 	r.GetBody = nil
 	// This hostname is logical. The transport opens a stream in this worker's
 	// outbound connection, never a connection to an advertised worker address.
-	inferenceProxy(&url.URL{Scheme: "http", Host: "worker"}, worker.transport).ServeHTTP(w, r)
+	inferenceProxy(&url.URL{Scheme: "http", Host: "worker"}, worker.transport, logger).ServeHTTP(logged, r)
+	finished = true
 }

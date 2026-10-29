@@ -84,7 +84,7 @@ func startTestWorker(t *testing.T, fixture transportFixture, id, token string, h
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- connectToHub(ctx, fixture.client, address, id, token, target) }()
+	go func() { done <- connectToHub(ctx, fixture.client, address, id, token, target, fixture.hub.logger) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -302,7 +302,7 @@ func TestTransport_DuplicateIdentityCannotDisplaceActiveWorker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	err = connectToHub(ctx, fixture.client, address, testWorkerID, testWorkerToken, target)
+	err = connectToHub(ctx, fixture.client, address, testWorkerID, testWorkerToken, target, fixture.hub.logger)
 
 	require.Error(t, err)
 	response, err := fixture.client.Do(fixture.request(t, context.Background(), `{"model":"test-model"}`))
@@ -388,7 +388,7 @@ func TestWorker_RefusesUntrustedHubCertificate(t *testing.T) {
 	}
 	t.Cleanup(client.CloseIdleConnections)
 
-	err = connectToHub(context.Background(), client, address, testWorkerID, testWorkerToken, target)
+	err = connectToHub(context.Background(), client, address, testWorkerID, testWorkerToken, target, h.logger)
 
 	require.EqualError(t, err, "worker connection failed")
 }

@@ -161,6 +161,34 @@ Start the hub, explicitly binding the appropriate reachable interface:
   --max-concurrent-requests 128
 ```
 
+### Logging
+
+Both commands accept `--log-level debug|info|warn|error` (default `info`). Logs are
+timestamped key/value records written to **stderr**. For example, append
+`--log-level debug` to either the hub or worker command. Use `./chair hub --help`
+or `./chair worker --help` to list all options.
+
+- **info:** hub startup/configured worker count, authenticated worker connections
+  and disconnections, first/changed model-inventory counts, inventory recovery,
+  and worker-side hub connection events.
+- **warn:** rejected authentication/protocol/duplicate identities, inventory
+  failures, missing model owners, concurrency-limit rejections, forwarding
+  failures/interrupted streams, and reconnect attempts. Repeated inventory
+  failures warn once per episode; subsequent failures are debug until recovery.
+- **debug:** unchanged inventory refreshes, repeated inventory failures, and each
+  inference's hub-local request ID, model, selected worker, method/path, status,
+  duration, response byte count, and completion/cancellation/interruption outcome.
+- **error:** fatal command/startup failures. Invalid log-level values are rejected.
+
+Diagnostics use fixed reason codes (for example `tls_verification_failed`,
+`engine_unreachable`, `invalid_inventory`, or `inventory_timeout`) and HTTP status
+codes, not raw library errors. Prompts, messages, request/response bodies, stream
+chunks, headers, cookies, tokens, and key/certificate material are never logged.
+Low-level HTTP/proxy/multiplexer logs remain suppressed for that reason; debug
+mode enables CHAIR's sanitized metadata, not those raw logs. Model names and
+worker IDs are operational metadata and appear in logs, so review logs before
+sharing them publicly.
+
 ### Concurrency tuning
 
 `--max-concurrent-requests N` accepts any positive integer and limits simultaneous

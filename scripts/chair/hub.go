@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -20,13 +22,14 @@ import (
 )
 
 type workerConnection struct {
-	id        string
-	session   *yamux.Session
-	transport *http.Transport
-	models    map[string]json.RawMessage
-	updatedAt time.Time
-	inflight  int
-	assigned  uint64
+	id              string
+	session         *yamux.Session
+	transport       *http.Transport
+	models          map[string]json.RawMessage
+	updatedAt       time.Time
+	inflight        int
+	assigned        uint64
+	inventoryFailed bool
 }
 
 type hub struct {
@@ -37,6 +40,8 @@ type hub struct {
 	assignment   uint64
 	closed       bool
 	requests     chan struct{}
+	logger       *slog.Logger
+	requestID    atomic.Uint64
 }
 
 func newHub(clientToken string, workerTokens map[string]string, maxConcurrentRequests int) *hub {
@@ -45,6 +50,7 @@ func newHub(clientToken string, workerTokens map[string]string, maxConcurrentReq
 		workerTokens: workerTokens,
 		workers:      make(map[string]*workerConnection),
 		requests:     make(chan struct{}, maxConcurrentRequests),
+		logger:       slog.Default(),
 	}
 }
 
@@ -60,6 +66,7 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !authenticated(r, h.clientToken) {
+		h.logger.Warn("request rejected", "reason", "client_authentication_failed")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -79,6 +86,7 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case h.requests <- struct{}{}:
 		defer func() { <-h.requests }()
 	default:
+		h.logger.Warn("inference rejected", "reason", "concurrency_limit")
 		http.Error(w, "hub concurrency limit reached", http.StatusServiceUnavailable)
 		return
 	}
@@ -89,6 +97,7 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 	id := r.Header.Get(workerIDHeader)
 	token, known := h.workerTokens[id]
 	if !known || !authenticated(r, token) {
+		h.logger.Warn("worker connection rejected", "reason", "worker_authentication_failed")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -97,6 +106,7 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !hasProtocol(r) {
+		h.logger.Warn("worker connection rejected", "worker_id", id, "reason", "unsupported_protocol")
 		http.Error(w, "unsupported worker protocol", http.StatusUpgradeRequired)
 		return
 	}
@@ -129,17 +139,22 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 	existing := h.workers[id]
 	if h.closed || (existing != nil && !existing.session.IsClosed()) {
 		h.mu.Unlock()
+		h.logger.Warn("worker connection rejected", "worker_id", id, "reason", "identity_unavailable")
 		_ = ws.Close(websocket.StatusPolicyViolation, "worker identity already connected or hub closed")
 		return
 	}
 	h.workers[id] = worker
+	connected := len(h.workers)
 	h.mu.Unlock()
+	h.logger.Info("worker connected", "worker_id", id, "connected_workers", connected)
 	defer func() {
 		h.mu.Lock()
 		if h.workers[id] == worker {
 			delete(h.workers, id)
 		}
+		connected := len(h.workers)
 		h.mu.Unlock()
+		h.logger.Info("worker disconnected", "worker_id", id, "connected_workers", connected)
 	}()
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -191,13 +206,21 @@ func (h *hub) Close() error {
 	return result
 }
 
-func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id, token string, target *url.URL) error {
+func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id, token string, target *url.URL, logger *slog.Logger) error {
+	logger = logger.With("worker_id", id)
 	ws, response, err := websocket.Dial(ctx, address.String(), &websocket.DialOptions{
 		HTTPClient:   client,
 		HTTPHeader:   http.Header{"Authorization": {"Bearer " + token}, workerIDHeader: {id}},
 		Subprotocols: []string{protocol},
 	})
 	if err != nil {
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+		}
+		if ctx.Err() == nil {
+			logger.Warn("hub connection failed", "reason", connectionReason(err), "status", status)
+		}
 		if response != nil && response.Body != nil {
 			_ = response.Body.Close()
 		}
@@ -206,6 +229,7 @@ func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id
 	}
 	defer ws.CloseNow()
 	if ws.Subprotocol() != protocol {
+		logger.Warn("hub connection rejected", "reason", "unsupported_protocol")
 		return fmt.Errorf("hub selected an unsupported protocol")
 	}
 	session, err := yamux.Server(websocket.NetConn(ctx, ws, websocket.MessageBinary), sessionConfig())
@@ -213,5 +237,7 @@ func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id
 		return fmt.Errorf("cannot create worker session")
 	}
 	defer session.Close()
-	return serveEngine(ctx, session, target)
+	logger.Info("connected to hub")
+	defer logger.Info("disconnected from hub")
+	return serveEngine(ctx, session, target, logger)
 }
