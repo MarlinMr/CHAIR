@@ -37,7 +37,9 @@ stream and cancels the local engine request without closing other streams.
 
 - Multiple active workers, each backed by a separately running local
   Ollama-compatible engine. Provision 1–256 authorized worker IDs on the hub.
-- `POST /api/generate`, `POST /api/chat`, and `GET /api/tags` only.
+- Ollama-native `POST /api/generate`, `POST /api/chat`, and `GET /api/tags`.
+- OpenAI-compatible `POST /v1/chat/completions` and `GET /v1/models`, including
+  chat streaming and transparent tool-call forwarding to Ollama's own API.
 - End-to-end TLS to the hub, with system trust or an additional CA file.
 - Operator-provisioned identities and a distinct bearer token for each worker,
   separate from the client token. One live connection per authorized identity;
@@ -72,7 +74,8 @@ stream and cancels the local engine request without closing other streams.
 
 **Not implemented:** interactive enrollment, worker certificates/mTLS,
 live credential revocation, GPU telemetry, queues, request deadlines,
-per-client quotas, OpenAI/Anthropic compatibility, remote engine administration,
+per-client quotas, other OpenAI endpoints (including Responses/embeddings),
+Anthropic compatibility, remote engine administration,
 desktop integration, service installation, or hub high availability. A stalled
 client can occupy a concurrency slot until it disconnects; do not expose this
 experiment to untrusted clients. Inventory can change between refresh and
@@ -241,6 +244,89 @@ The command shows the header syntax, but shell-expanded tokens can be visible in
 process arguments. For sensitive environments, configure the client to read its
 authorization header from a protected file instead. Browser clients are not
 supported; the hub rejects requests with an `Origin` header.
+
+## OpenAI-compatible clients and OpenCode
+
+Applications connect to the **hub**, not workers. Configure:
+
+- **Base URL:** `https://hub.example.internal:8443/v1`
+- **API key:** the hub's **client** token, not a worker token or an OpenAI key.
+- **Model:** an installed ID from authenticated `GET /v1/models`.
+
+The hub returns a sorted, deduplicated OpenAI model list:
+`{"object":"list","data":[{"id":"model:latest","object":"model","created":0,"owned_by":"ollama"}]}`.
+IDs normalize implicit `:latest` tags; `created` is zero because the aggregate
+inventory does not have an authoritative creation timestamp. Empty healthy
+inventories return an empty `data` array; unavailable inventories return `503`.
+
+```bash
+curl --no-buffer --cacert private-ca.crt \
+  --header "Authorization: Bearer $(cat client.token)" \
+  --header 'Content-Type: application/json' \
+  --data '{"model":"your-installed-model:latest","messages":[{"role":"user","content":"Hello"}],"stream":true}' \
+  https://hub.example.internal:8443/v1/chat/completions
+```
+
+CHAIR forwards the complete JSON body and the selected worker's response without
+translation: messages, tool definitions/results, tool-call argument fragments,
+usage fields, finish reasons, and SSE `[DONE]` markers remain intact. The engine
+and model must support the requested features. CHAIR does not execute client
+tools or emulate unsupported Ollama parameters. Request/response contents remain
+excluded from logs. Streaming, cancellation, concurrency limits, and model-owner
+selection work exactly as for the native Ollama routes.
+
+Hub-generated errors on `/v1/` use an OpenAI-shaped JSON `error` object; engine
+HTTP errors are passed through with their status/body unchanged. There is no
+automatic job replay, although a client SDK may independently retry failed calls.
+This is the **Chat Completions subset**, not the entire OpenAI API: Responses,
+embeddings, individual-model retrieval, audio, files, and assistants are not exposed.
+Only the documented methods/paths with no query string are accepted.
+
+### OpenCode V2 configuration
+
+Use a custom **OpenAI-compatible Chat** provider, not the OpenAI Responses package
+or Ollama's native discovery (which also needs `/api/show`, not exposed by CHAIR).
+For example, add this to your own `opencode.jsonc`:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "chair/coder",
+  "providers": {
+    "chair": {
+      "name": "CHAIR",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://hub.example.internal:8443/v1",
+        "apiKey": "{env:CHAIR_API_KEY}",
+        "encoding": "none"
+      },
+      "models": {
+        "coder": {
+          "modelID": "your-installed-model:latest",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "compatibility": { "maxTokensField": "max_tokens" },
+          "limit": { "context": 32768, "output": 8192 }
+        }
+      }
+    }
+  }
+}
+```
+
+Replace the model ID, capabilities, and context/output limits with those of your
+actual model and worker engine settings; the numbers above are examples, not
+detected limits. Choose a tool-capable model for coding-agent workflows. Make the
+client token available to the OpenCode server as `CHAIR_API_KEY`, and ensure that
+server trusts the hub's certificate issuer. Do not disable TLS verification or
+commit the token. See the official [OpenCode V2 provider guide](https://opencode.ai/v2/docs/providers)
+and [model guide](https://opencode.ai/v2/docs/models) for current configuration.
+Protocol forwarding is tested with fake engines; end-to-end OpenCode/real-model
+agent behavior still requires testing on your deployment.
+
+**Upgrade both hub and workers to this build.** The worker protocol is now
+`chair-transport-v2`; earlier workers without the OpenAI routes are rejected at
+connection time rather than silently accepting jobs they cannot serve.
 
 ## Firewall and failure checks
 

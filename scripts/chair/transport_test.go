@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -69,12 +70,13 @@ func testEngine(t *testing.T, models []string, inference http.HandlerFunc) http.
 func startTestWorker(t *testing.T, fixture transportFixture, id, token string, handler http.HandlerFunc) context.CancelFunc {
 	t.Helper()
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Like a real inference engine, consume the prompt before generating.
-		// net/http cannot watch for disconnects until the request body is read.
-		_, err := io.Copy(io.Discard, r.Body)
+		// Read the real HTTP body before generating so net/http can watch for
+		// disconnects, then allow each fake engine to inspect the request too.
+		body, err := io.ReadAll(r.Body)
 		if !assert.NoError(t, err) {
 			return
 		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		handler(w, r)
 	}))
 	t.Cleanup(engine.Close)

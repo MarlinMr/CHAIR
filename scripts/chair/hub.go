@@ -58,7 +58,7 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// This experiment requires end-to-end TLS, even behind a reverse proxy.
 	// Forwarded headers are not an authentication or transport-security signal.
 	if r.TLS == nil || r.Header.Get("Origin") != "" {
-		http.Error(w, "TLS required; browser requests are unsupported", http.StatusForbidden)
+		writeAPIError(w, r, http.StatusForbidden, "TLS required; browser requests are unsupported", "transport_forbidden")
 		return
 	}
 	if r.URL.Path == workerPath {
@@ -67,19 +67,19 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !authenticated(r, h.clientToken) {
 		h.logger.Warn("request rejected", "reason", "client_authentication_failed")
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
 		return
 	}
 	if !allowedRequest(r) {
-		http.Error(w, "unsupported inference route", http.StatusNotFound)
+		writeAPIError(w, r, http.StatusNotFound, "unsupported inference route", "unsupported_route")
 		return
 	}
 	if r.ContentLength > maxRequestBytes {
-		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		writeAPIError(w, r, http.StatusRequestEntityTooLarge, "request body too large", "request_too_large")
 		return
 	}
-	if r.URL.Path == "/api/tags" {
-		h.serveModels(w)
+	if r.URL.Path == "/api/tags" || r.URL.Path == "/v1/models" {
+		h.serveModels(w, r)
 		return
 	}
 	select {
@@ -87,7 +87,7 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer func() { <-h.requests }()
 	default:
 		h.logger.Warn("inference rejected", "reason", "concurrency_limit")
-		http.Error(w, "hub concurrency limit reached", http.StatusServiceUnavailable)
+		writeAPIError(w, r, http.StatusServiceUnavailable, "hub concurrency limit reached", "concurrency_limit")
 		return
 	}
 	h.routeInference(w, r)

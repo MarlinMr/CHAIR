@@ -154,7 +154,7 @@ func (w *workerConnection) ready(now time.Time) bool {
 	return !w.session.IsClosed() && !w.updatedAt.IsZero() && now.Sub(w.updatedAt) < inventoryLifetime
 }
 
-func (h *hub) serveModels(w http.ResponseWriter) {
+func (h *hub) serveModels(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	workers := make([]*workerConnection, 0, len(h.workers))
 	if !h.closed {
@@ -175,7 +175,7 @@ func (h *hub) serveModels(w http.ResponseWriter) {
 	}
 	h.mu.Unlock()
 	if len(workers) == 0 {
-		http.Error(w, "no worker with a fresh engine inventory", http.StatusServiceUnavailable)
+		writeAPIError(w, r, http.StatusServiceUnavailable, "no worker with a fresh engine inventory", "inventory_unavailable")
 		return
 	}
 	keys := make([]string, 0, len(merged))
@@ -183,6 +183,20 @@ func (h *hub) serveModels(w http.ResponseWriter) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	if r.URL.Path == "/v1/models" {
+		models := make([]openAIModel, 0, len(keys))
+		for _, key := range keys {
+			// IDs use the same implicit-:latest normalization as routing. The
+			// aggregate has no authoritative creation timestamp, hence zero.
+			models = append(models, openAIModel{ID: key, Object: "model", OwnedBy: "ollama"})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Object string        `json:"object"`
+			Data   []openAIModel `json:"data"`
+		}{Object: "list", Data: models})
+		return
+	}
 	models := make([]json.RawMessage, 0, len(keys))
 	for _, key := range keys {
 		models = append(models, merged[key])
@@ -229,9 +243,9 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var limit *http.MaxBytesError
 		if errors.As(err, &limit) {
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			writeAPIError(w, r, http.StatusRequestEntityTooLarge, "request body too large", "request_too_large")
 		} else {
-			http.Error(w, "cannot read request body", http.StatusBadRequest)
+			writeAPIError(w, r, http.StatusBadRequest, "cannot read request body", "invalid_request")
 		}
 		return
 	}
@@ -239,14 +253,14 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 		Model string `json:"model"`
 	}
 	if err := json.Unmarshal(body, &request); err != nil || !validModel(request.Model) {
-		http.Error(w, "request must be a JSON object with a nonempty model", http.StatusBadRequest)
+		writeAPIError(w, r, http.StatusBadRequest, "request must be a JSON object with a nonempty model", "invalid_request")
 		return
 	}
 	worker := h.reserveWorker(request.Model)
 	logger := h.logger.With("request_id", h.requestID.Add(1), "model", request.Model, "method", r.Method, "path", r.URL.Path)
 	if worker == nil {
 		logger.Warn("inference rejected", "reason", "no_eligible_worker")
-		http.Error(w, "no connected worker advertises the requested model", http.StatusBadGateway)
+		writeAPIError(w, r, http.StatusBadGateway, "no connected worker advertises the requested model", "model_unavailable")
 		return
 	}
 	defer func() {

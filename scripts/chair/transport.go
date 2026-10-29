@@ -23,7 +23,7 @@ import (
 
 const (
 	workerPath                   = "/worker"
-	protocol                     = "chair-transport-v1"
+	protocol                     = "chair-transport-v2"
 	defaultMaxConcurrentRequests = 16
 	maxRequestBytes              = 8 << 20
 	connectionTimeout            = 10 * time.Second
@@ -40,9 +40,9 @@ func allowedRequest(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case "/api/chat", "/api/generate":
+	case "/api/chat", "/api/generate", "/v1/chat/completions":
 		return r.Method == http.MethodPost
-	case "/api/tags":
+	case "/api/tags", "/v1/models":
 		return r.Method == http.MethodGet
 	default:
 		return false
@@ -75,7 +75,7 @@ func inferenceProxy(target *url.URL, transport http.RoundTripper, logger *slog.L
 			if r.Context().Err() == nil {
 				logger.Warn("inference forwarding failed", "reason", "upstream_connection_failed")
 			}
-			http.Error(w, "inference connection failed", http.StatusBadGateway)
+			writeAPIError(w, r, http.StatusBadGateway, "inference connection failed", "upstream_connection_failed")
 		},
 	}
 }
@@ -165,11 +165,11 @@ func serveEngine(ctx context.Context, session *yamux.Session, target *url.URL, l
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !allowedRequest(r) {
-				http.Error(w, "unsupported inference route", http.StatusNotFound)
+				writeAPIError(w, r, http.StatusNotFound, "unsupported inference route", "unsupported_route")
 				return
 			}
 			if r.ContentLength > maxRequestBytes {
-				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				writeAPIError(w, r, http.StatusRequestEntityTooLarge, "request body too large", "request_too_large")
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
