@@ -118,9 +118,62 @@ On Windows, build with `go build -o chair.exe .`. Use `./chair` (or
 or your local build directory. CHAIR currently uses server-verified TLS plus
 per-worker bearer credentials, not PAIR's PIN pairing or peer certificate mesh.
 
+### Generate a TLS certificate for testing
+
+For a controlled test, generate a self-signed certificate on the hub using
+OpenSSL 1.1.1 or newer. The following commands use a POSIX shell (Linux/macOS).
+Replace the example hostname and IP with the addresses you will actually use:
+
+```bash
+umask 077
+openssl req -x509 -newkey rsa:3072 -nodes \
+  -keyout hub.key \
+  -out hub.crt \
+  -days 30 \
+  -subj "/CN=hub.example.internal" \
+  -addext "subjectAltName=DNS:hub.example.internal,IP:192.168.1.100" \
+  -addext "basicConstraints=critical,CA:FALSE"
+```
+
+Use `--tls-cert hub.crt --tls-key hub.key` when starting the hub, as shown below.
+The certificate is valid for 30 days. Every hostname or IP used in a connection
+URL must appear in `subjectAltName`; the common name alone is not sufficient.
+A DNS entry does not create name resolution: configure DNS/hosts or connect using
+the listed IP.
+
+**Keep `hub.key` private on the hub.** It is unencrypted, so protect it with
+owner-only permissions. Copy only the public `hub.crt` to each worker and to
+clients that need to trust it. For example, after provisioning worker credentials
+and starting the hub on port 443:
+
+```bash
+./chair worker \
+  --hub https://192.168.1.100:443 \
+  --ca-file hub.crt \
+  --worker-id gpu-a --worker-token-file gpu-a.token \
+  --engine http://127.0.0.1:11434
+```
+
+Test the authenticated model-list endpoint from a client:
+
+```bash
+curl --cacert hub.crt \
+  --header "Authorization: Bearer $(cat client.token)" \
+  https://192.168.1.100/v1/models
+```
+
+Use `:8443` in both URLs instead if the hub uses the port in the example below.
+The dashboard's browser will warn that this self-signed certificate is not
+publicly trusted. For this controlled test only, verify that the certificate is
+the one you generated and use the browser's certificate exception if available.
+For regular use, obtain a certificate from a trusted issuer or configure a private
+CA trusted by your browsers and clients. Do not disable TLS verification in
+workers or API clients, and never commit certificates' private keys or tokens.
+
 ### Provision credentials and start the hub
 
-Provision a TLS certificate/key for the hub's DNS name. Clients and workers must
+Provision a TLS certificate/key for the hub's DNS name (or use the test certificate
+above). Clients and workers must
 trust its issuer and use a name covered by its certificate. For a private CA,
 provide the CA certificate to workers with `--ca-file` and clients with their
 normal CA configuration. There is deliberately no insecure TLS option.
