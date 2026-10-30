@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -45,17 +46,21 @@ func validModel(name string) bool {
 		return false
 	}
 	for _, c := range name {
-		if c <= ' ' || c == 127 {
+		if unicode.IsSpace(c) || unicode.IsControl(c) {
 			return false
 		}
 	}
 	return true
 }
 
-// Keep Ollama's metadata intact when merging inventories. Model names are the
-// capability gate; fields such as size and digest remain client-facing data.
+// Keep each engine's model metadata. Only Ollama names get implicit :latest
+// normalization; OpenAI-compatible IDs are exact, including vendor aliases.
 func fetchInventory(ctx context.Context, worker *workerConnection) (map[string]json.RawMessage, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://worker/api/tags", nil)
+	path := "/api/tags"
+	if worker.engineType == engineOpenAI {
+		path = "/v1/models"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://worker"+path, nil)
 	if err != nil {
 		return nil, &inventoryFailure{reason: "inventory_request_failed"}
 	}
@@ -74,6 +79,9 @@ func fetchInventory(ctx context.Context, worker *workerConnection) (map[string]j
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxInventoryBytes+1))
 	if err != nil || len(body) > maxInventoryBytes {
 		return nil, &inventoryFailure{reason: "inventory_unreadable_or_oversized"}
+	}
+	if worker.engineType == engineOpenAI {
+		return parseOpenAIInventory(body)
 	}
 	var inventory struct {
 		Models *[]json.RawMessage `json:"models"`
@@ -94,6 +102,28 @@ func fetchInventory(ctx context.Context, worker *workerConnection) (map[string]j
 	return models, nil
 }
 
+func parseOpenAIInventory(body []byte) (map[string]json.RawMessage, error) {
+	var inventory struct {
+		Object string             `json:"object"`
+		Data   *[]json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &inventory) != nil || inventory.Object != "list" || inventory.Data == nil || len(*inventory.Data) > maxModels {
+		return nil, &inventoryFailure{reason: "invalid_inventory"}
+	}
+	models := make(map[string]json.RawMessage, len(*inventory.Data))
+	for _, raw := range *inventory.Data {
+		var model openAIModel
+		if json.Unmarshal(raw, &model) != nil || model.Object != "model" || !validModel(model.ID) {
+			return nil, &inventoryFailure{reason: "invalid_inventory_model"}
+		}
+		if _, duplicate := models[model.ID]; duplicate {
+			return nil, &inventoryFailure{reason: "invalid_inventory_model"}
+		}
+		models[model.ID] = raw
+	}
+	return models, nil
+}
+
 func (h *hub) refreshInventory(parent context.Context, worker *workerConnection) {
 	ctx, cancel := context.WithTimeout(parent, inventoryTimeout)
 	defer cancel()
@@ -105,7 +135,7 @@ func (h *hub) refreshInventory(parent context.Context, worker *workerConnection)
 	}
 	wasFailed := worker.inventoryFailed
 	hadInventory := !worker.updatedAt.IsZero()
-	changed := !sameInventory(worker.models, models)
+	changed := !sameModelSet(worker.models, models)
 	// Failed or malformed reports withdraw all capabilities until a good report
 	// arrives. Do not keep routing against a cached positive inventory forever.
 	worker.models = models
@@ -138,12 +168,12 @@ func (h *hub) refreshInventory(parent context.Context, worker *workerConnection)
 	}
 }
 
-func sameInventory(left, right map[string]json.RawMessage) bool {
+func sameModelSet(left, right map[string]json.RawMessage) bool {
 	if len(left) != len(right) {
 		return false
 	}
-	for name, raw := range left {
-		if !bytes.Equal(raw, right[name]) {
+	for name := range left {
+		if _, exists := right[name]; !exists {
 			return false
 		}
 	}
@@ -159,7 +189,7 @@ func (h *hub) serveModels(w http.ResponseWriter, r *http.Request) {
 	workers := make([]*workerConnection, 0, len(h.workers))
 	if !h.closed {
 		for _, worker := range h.workers {
-			if worker.ready(time.Now()) {
+			if worker.ready(time.Now()) && engineSupportsPath(worker.engineType, r.URL.Path) {
 				workers = append(workers, worker)
 			}
 		}
@@ -169,6 +199,9 @@ func (h *hub) serveModels(w http.ResponseWriter, r *http.Request) {
 	for _, worker := range workers {
 		for key, model := range worker.models {
 			if _, exists := merged[key]; !exists {
+				if r.URL.Path == "/v1/models" && worker.engineType == engineOllama {
+					model, _ = json.Marshal(openAIModel{ID: key, Object: "model", OwnedBy: "ollama"})
+				}
 				merged[key] = model
 			}
 		}
@@ -184,16 +217,14 @@ func (h *hub) serveModels(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(keys)
 	if r.URL.Path == "/v1/models" {
-		models := make([]openAIModel, 0, len(keys))
+		models := make([]json.RawMessage, 0, len(keys))
 		for _, key := range keys {
-			// IDs use the same implicit-:latest normalization as routing. The
-			// aggregate has no authoritative creation timestamp, hence zero.
-			models = append(models, openAIModel{ID: key, Object: "model", OwnedBy: "ollama"})
+			models = append(models, merged[key])
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(struct {
-			Object string        `json:"object"`
-			Data   []openAIModel `json:"data"`
+			Object string            `json:"object"`
+			Data   []json.RawMessage `json:"data"`
 		}{Object: "list", Data: models})
 		return
 	}
@@ -209,19 +240,33 @@ func (h *hub) serveModels(w http.ResponseWriter, r *http.Request) {
 
 // Reserve before unlocking so concurrent bursts see work that has just been
 // assigned, not only work whose response headers have already arrived.
-func (h *hub) reserveWorker(model string) *workerConnection {
+func (h *hub) reserveWorker(model, path string) *workerConnection {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
 		return nil
 	}
 	now := time.Now()
+	// An exact advertised OpenAI ID must not lose to Ollama's convenience alias.
+	exact := false
+	for _, worker := range h.workers {
+		if worker.ready(now) && engineSupportsPath(worker.engineType, path) {
+			if _, owns := worker.models[model]; owns {
+				exact = true
+				break
+			}
+		}
+	}
 	var selected *workerConnection
 	for _, worker := range h.workers {
-		if !worker.ready(now) {
+		if !worker.ready(now) || !engineSupportsPath(worker.engineType, path) {
 			continue
 		}
-		if _, owns := worker.models[canonicalModel(model)]; !owns {
+		key := model
+		if worker.engineType == engineOllama && !exact {
+			key = canonicalModel(model)
+		}
+		if _, owns := worker.models[key]; !owns {
 			continue
 		}
 		if selected == nil || worker.inflight < selected.inflight ||
@@ -256,7 +301,7 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, http.StatusBadRequest, "request must be a JSON object with a nonempty model", "invalid_request")
 		return
 	}
-	worker := h.reserveWorker(request.Model)
+	worker := h.reserveWorker(request.Model, r.URL.Path)
 	requestID := h.requestID.Add(1)
 	logger := h.logger.With("request_id", requestID, "model", request.Model, "method", r.Method, "path", r.URL.Path)
 	if worker == nil {

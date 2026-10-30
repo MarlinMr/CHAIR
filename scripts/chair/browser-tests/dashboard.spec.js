@@ -216,6 +216,8 @@ test('enrollment returns a generated token once and adds a live dashboard row', 
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
         await page.screenshot({ path: test.info().outputPath('join-mobile.png'), fullPage: true });
         await page.getByLabel('Worker ID', { exact: true }).fill('browser-enrolled-gpu');
+        await page.getByLabel('Engine API', { exact: true }).selectOption('openai');
+        await page.getByLabel('Local engine URL', { exact: true }).fill('http://127.0.0.1:8000');
         await page.getByLabel('Shared enrollment token', { exact: true }).fill(enrollmentToken);
 
         await page.getByRole('button', { name: 'Register worker' }).click();
@@ -227,6 +229,8 @@ test('enrollment returns a generated token once and adds a live dashboard row', 
         await expect(page.locator('#enrollment-token')).toHaveValue('');
         await expect(page.locator('#enroll-worker')).toBeDisabled();
         await expect(page.locator('#worker-start-command')).toContainText('browser-enrolled-gpu.token');
+        await expect(page.locator('#worker-start-command')).toContainText("--engine-type 'openai'");
+        await expect(page.locator('#worker-start-command')).toContainText('http://127.0.0.1:8000');
         expect(await page.locator('#worker-start-command').textContent()).not.toContain(token);
         const saved = JSON.parse(await readFile(join(directory, 'workers.json'), 'utf8'));
         expect(saved.workers.find(worker => worker.id === 'browser-enrolled-gpu').token).toBe(token);

@@ -23,7 +23,7 @@ AI client -- HTTPS + client token --> CPU-only hub
                        LAN A          LAN B           LAN C
                           |              |              |
                        local          local          local
-                       Ollama         Ollama         Ollama
+                       Ollama       llama.cpp         vLLM
 ```
 
 The worker opens the only network connection required between hub and worker.
@@ -36,11 +36,14 @@ stream and cancels the local engine request without closing other streams.
 ## Current scope
 
 - Multiple active workers, each backed by a separately running local
-  Ollama-compatible engine. Up to 256 authorized worker IDs; an empty registry
+  Ollama engine or OpenAI-compatible llama.cpp/vLLM server. Up to 256 authorized worker IDs; an empty registry
   can be used before enrolling the first worker.
 - Ollama-native `POST /api/generate`, `POST /api/chat`, and `GET /api/tags`.
 - OpenAI-compatible `POST /v1/chat/completions` and `GET /v1/models`, including
-  chat streaming and transparent tool-call forwarding to Ollama's own API.
+  chat streaming and transparent tool-call forwarding to the selected engine.
+- `--engine-type ollama` (default) discovers `/api/tags` and serves native plus
+  OpenAI chat. `--engine-type openai` discovers `/v1/models` and serves only the
+  OpenAI Chat Completions subset. Types are explicit, never auto-detected.
 - Optional read-only HTTPS dashboard showing worker connections, fresh model
   inventories, and active hub-routed jobs, protected by a separate credential.
 - End-to-end TLS to the hub, with system trust or an additional CA file.
@@ -285,13 +288,14 @@ Probes run once at worker startup, with bounded command output and a two-second
 deadline per command; restart the worker to re-detect hardware.
 
 These are host facts, **not** live utilization, free-memory values, or proof that
-Ollama is using any listed device. Containers may report host RAM/CPU rather than
-their resource limits; GPU visibility may differ between the worker and Ollama.
+the engine is using any listed device. Containers may report host RAM/CPU rather than
+their resource limits; GPU visibility may differ between the worker and engine.
 The worker sends only the selected summary fields, never hostnames, serial
 numbers, device UUIDs, or raw command output. Metadata is bounded and validated
 by the hub, and is not used for scheduling. Update the hub for the new UI and
 workers for hardware reporting. The optional metadata does not change transport
-v2; a worker without a report shows unavailable details.
+v3; a worker without a report shows unavailable details. Connected workers also
+show their reported engine API type (`ollama` or `openai`) below their ID.
 
 Jobs are only requests routed through this hub, not engine-local work. They
 disappear on completion, failure, or cancellation; there is no job history.
@@ -422,7 +426,9 @@ command containing the ID and token-file path, **not** the token itself. Save
 the token to that file on the worker, restrict its permissions (owner-only on
 POSIX, an appropriate ACL on Windows), and run the displayed command. Windows
 users should use `chair.exe`; the quoted command is suitable for a POSIX shell
-or PowerShell, with paths adjusted as needed. Start Ollama separately first, and
+or PowerShell, with paths adjusted as needed. Select the engine API and local
+root URL for the generated command; these settings are not enrollment credentials.
+Start the selected engine separately first, and
 add `--ca-file hub.crt` when using a private/self-signed certificate. The worker
 then connects normally and appears as Ready once it reports a fresh inventory.
 
@@ -548,7 +554,106 @@ with its own local engine URL. Repeat with additional authorized IDs as needed.
 Install the same model on multiple workers to distribute requests for that model;
 workers with different models are used only for their own advertised models.
 
-Send an inference request from an authorized client:
+### llama.cpp and vLLM workers
+
+Both engines use **`--engine-type openai`**. Start the engine independently, then
+point a worker at its root URL (not its `/v1` URL). These are example startup
+commands; select a chat-capable model, context size, GPU settings, and engine
+version appropriate to your machine. CHAIR does not install engines or models.
+
+#### llama.cpp
+
+```bash
+llama-server --model /path/to/chat-model.gguf \
+  --alias llama-coder --host 127.0.0.1 --port 8080 --jinja
+
+./chair worker \
+  --hub https://hub.example.internal:8443 \
+  --worker-id llama-gpu --worker-token-file llama-gpu.token \
+  --ca-file private-ca.crt \
+  --engine-type openai --engine http://127.0.0.1:8080
+```
+
+Use the exact alias `llama-coder` from the hub's `/v1/models` when calling chat.
+Do not append `:latest`. Consult the official
+[llama.cpp server guide](https://github.com/ggml-org/llama.cpp/tree/master/tools/server)
+for model templates, GPU offload, and tool-call support.
+
+#### vLLM
+
+```bash
+vllm serve /path/to/chat-model \
+  --served-model-name vllm-coder --host 127.0.0.1 --port 8000
+
+./chair worker \
+  --hub https://hub.example.internal:8443 \
+  --worker-id vllm-gpu --worker-token-file vllm-gpu.token \
+  --ca-file private-ca.crt \
+  --engine-type openai --engine http://127.0.0.1:8000
+```
+
+Use the exact served ID `vllm-coder`. vLLM chat requires a suitable chat template;
+tool use may need model-specific tool-parser/auto-tool-choice flags. See the
+official [vLLM serving guide](https://docs.vllm.ai/en/latest/serving/online_serving/).
+CHAIR forwards those requests/responses; it does not supply templates or parsers.
+
+Provision each ID/token in `workers.json` or use `/join` before starting its
+worker. Omit `--ca-file` with a publicly trusted hub certificate. In containers,
+publish the engine port to host loopback or run worker and engine in the same
+network namespace. Arbitrary remote engine targets, HTTPS engine URLs, and
+custom path prefixes are not supported; loopback HTTP remains required.
+
+#### Optional local-engine authentication
+
+If the engine requires an API key, configure it on that engine and store the
+same key in an owner-only file **on the worker**, then append:
+
+```text
+--engine-token-file engine.token
+```
+
+For example, llama.cpp supports `--api-key-file engine.token` on its own command.
+Follow the engine's documentation for its authentication configuration. The
+worker injects `Authorization: Bearer <engine key>` into its loopback model-list
+and inference requests only. The key is never put in worker handshake metadata
+or sent to the hub by CHAIR. Client authorization/cookies and worker credentials
+are still stripped before reaching the engine. Never reuse the worker credential
+as the engine key; startup rejects that. Unlike CHAIR's own credentials, existing
+engine keys may be shorter than 32 characters; the optional key file accepts a
+nonempty, non-whitespace ASCII key within 4096 file bytes. Prefer strong random
+keys, keep them out of shell arguments/logs, and restart the worker after changes.
+Use trusted engines: their response/error bodies are forwarded unchanged, so
+the engine itself must not echo credentials or other sensitive diagnostics.
+
+#### Mixed-cluster routing and API boundaries
+
+Ollama and OpenAI-mode workers may share a hub. `/v1/models` is their sorted,
+deduplicated union; OpenAI-mode IDs/metadata are preserved exactly, while Ollama
+models retain their implicit-`:latest` convention. IDs must be nonempty, at most
+512 bytes, and contain no whitespace/control characters. Use aliases for model
+paths containing spaces. Duplicate IDs use metadata from the lowest worker ID;
+use distinct aliases if engines serve different models under similar names.
+Exact advertised IDs take precedence over Ollama's implicit-tag convenience
+alias, so a fresh OpenAI worker advertising `coder` is not bypassed for an
+Ollama worker advertising `coder:latest`. Without an exact eligible match,
+Ollama's existing implicit-tag matching still applies.
+
+Native `/api/chat`, `/api/generate`, and `/api/tags` use **only Ollama workers**.
+`/api/tags` never invents Ollama metadata for OpenAI engines. With no eligible
+Ollama inventory it returns `503`; native inference without an eligible owner
+returns `502`. OpenAI-mode matching does not add/remove tags, and request bodies
+are never rewritten to change a model ID. Discovery failures withdraw that
+worker's models until recovery, without trying another inventory dialect.
+
+Only `/v1/chat/completions` and `/v1/models` are exposed for OpenAI engines. Native
+llama.cpp/vLLM completion, Responses, embeddings, health, administrative, file,
+model-loading, and server-tool endpoints are not exposed by CHAIR. Even through
+Chat Completions, an engine may have its own server-side tools or URL/media
+fetching behavior: leave those disabled unless intended. CHAIR does not sandbox
+engines, emulate unsupported parameters, or execute client tool calls.
+
+For an Ollama worker, send a native inference request from an authorized client
+(llama.cpp/vLLM clients should use Chat Completions in the next section):
 
 ```bash
 curl --no-buffer --cacert private-ca.crt \
@@ -574,8 +679,10 @@ Applications connect to the **hub**, not workers. Configure:
 
 The hub returns a sorted, deduplicated OpenAI model list:
 `{"object":"list","data":[{"id":"model:latest","object":"model","created":0,"owned_by":"ollama"}]}`.
-IDs normalize implicit `:latest` tags; `created` is zero because the aggregate
-inventory does not have an authoritative creation timestamp. Empty healthy
+For Ollama only, IDs normalize implicit `:latest` tags and `created` is zero
+because its aggregate inventory has no authoritative creation timestamp.
+OpenAI-mode IDs, creation timestamps, ownership, and vendor metadata are retained
+from the engine. Empty healthy
 inventories return an empty `data` array; unavailable inventories return `503`.
 
 ```bash
@@ -590,7 +697,7 @@ CHAIR forwards the complete JSON body and the selected worker's response without
 translation: messages, tool definitions/results, tool-call argument fragments,
 usage fields, finish reasons, and SSE `[DONE]` markers remain intact. The engine
 and model must support the requested features. CHAIR does not execute client
-tools or emulate unsupported Ollama parameters. Request/response contents remain
+tools or emulate unsupported engine parameters. Request/response contents remain
 excluded from logs. Streaming, cancellation, concurrency limits, and model-owner
 selection work exactly as for the native Ollama routes.
 
@@ -640,12 +747,17 @@ client token available to the OpenCode server as `CHAIR_API_KEY`, and ensure tha
 server trusts the hub's certificate issuer. Do not disable TLS verification or
 commit the token. See the official [OpenCode V2 provider guide](https://opencode.ai/v2/docs/providers)
 and [model guide](https://opencode.ai/v2/docs/models) for current configuration.
-Protocol forwarding is tested with fake engines; end-to-end OpenCode/real-model
-agent behavior still requires testing on your deployment.
+Protocol forwarding, including llama.cpp/vLLM-shaped APIs, is tested with fake
+engines; real llama.cpp/vLLM model/GPU runs and end-to-end OpenCode agent behavior
+still require testing on your deployment.
 
 **Upgrade both hub and workers to this build.** The worker protocol is now
-`chair-transport-v2`; earlier workers without the OpenAI routes are rejected at
-connection time rather than silently accepting jobs they cannot serve.
+`chair-transport-v3`; v1/v2 workers cannot advertise the required engine type and
+are rejected at connection time. Existing worker IDs/tokens remain valid: no
+reenrollment is needed, but **all hub/worker executables must be upgraded**.
+The client API/base URL and enrollment workflow are unchanged. The OpenCode
+configuration above uses an Ollama-style example ID; for llama.cpp/vLLM, set its
+`modelID` to the exact alias/served ID from `/v1/models`, without adding `:latest`.
 
 ## Firewall and failure checks
 

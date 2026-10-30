@@ -10,8 +10,9 @@ SPDX-License-Identifier: Apache-2.0
 CHAIR routes AI inference through a CPU-only central hub to GPU workers across
 LANs and subnets. Workers make outbound authenticated TLS connections to the hub;
 no mDNS, inbound worker ports, or worker-to-worker connectivity is required.
-The hub matches requests to advertised Ollama models and distributes concurrent
-work among eligible workers. Clients can use the OpenAI-compatible Chat
+The hub matches requests to advertised models from **Ollama, llama.cpp, and vLLM**
+and distributes concurrent work among eligible workers. Use `--engine-type openai`
+for llama.cpp/vLLM workers. Clients can use the OpenAI-compatible Chat
 Completions API at the hub's `/v1` base URL; see the setup guide for OpenCode V2
 configuration and the supported API subset.
 An optional authenticated web dashboard shows workers, their models, and active

@@ -33,6 +33,7 @@ type workerConnection struct {
 	assigned        uint64
 	inventoryFailed bool
 	hardware        workerHardware
+	engineType      string
 }
 
 type hub struct {
@@ -130,6 +131,11 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported worker protocol", http.StatusUpgradeRequired)
 		return
 	}
+	engineType := r.Header.Get(engineTypeHeader)
+	if !validEngineType(engineType) {
+		http.Error(w, "unsupported engine type", http.StatusBadRequest)
+		return
+	}
 	hardware, err := decodeHardware(r.Header.Get(hardwareHeader))
 	if err != nil {
 		http.Error(w, "invalid hardware metadata", http.StatusBadRequest)
@@ -159,7 +165,7 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 		MaxResponseHeaderBytes: 64 << 10,
 	}
 	defer transport.CloseIdleConnections()
-	worker := &workerConnection{id: id, session: session, transport: transport, hardware: hardware}
+	worker := &workerConnection{id: id, session: session, transport: transport, hardware: hardware, engineType: engineType}
 	h.mu.Lock()
 	existing := h.workers[id]
 	if h.closed || (existing != nil && !existing.session.IsClosed()) {
@@ -231,7 +237,7 @@ func (h *hub) Close() error {
 	return result
 }
 
-func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id, token string, target *url.URL, logger *slog.Logger, hardware workerHardware) error {
+func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id, token string, target *url.URL, logger *slog.Logger, hardware workerHardware, engine engineSettings) error {
 	logger = logger.With("worker_id", id)
 	metadata, err := json.Marshal(hardware)
 	if err != nil {
@@ -239,7 +245,7 @@ func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id
 	}
 	ws, response, err := websocket.Dial(ctx, address.String(), &websocket.DialOptions{
 		HTTPClient:   client,
-		HTTPHeader:   http.Header{"Authorization": {"Bearer " + token}, workerIDHeader: {id}, hardwareHeader: {base64.RawURLEncoding.EncodeToString(metadata)}},
+		HTTPHeader:   http.Header{"Authorization": {"Bearer " + token}, workerIDHeader: {id}, hardwareHeader: {base64.RawURLEncoding.EncodeToString(metadata)}, engineTypeHeader: {engine.kind}},
 		Subprotocols: []string{protocol},
 	})
 	if err != nil {
@@ -268,5 +274,5 @@ func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id
 	defer session.Close()
 	logger.Info("connected to hub")
 	defer logger.Info("disconnected from hub")
-	return serveEngine(ctx, session, target, logger)
+	return serveEngine(ctx, session, target, logger, engine)
 }

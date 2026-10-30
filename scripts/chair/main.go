@@ -156,7 +156,9 @@ func runWorker(ctx context.Context, args []string) error {
 	address := flags.String("hub", "", "hub HTTPS base URL")
 	tokenPath := flags.String("worker-token-file", "", "worker bearer token file")
 	id := flags.String("worker-id", "", "stable worker ID authorized in the hub's workers file")
-	engine := flags.String("engine", "http://127.0.0.1:11434", "local Ollama engine URL (literal loopback address only)")
+	engine := flags.String("engine", "http://127.0.0.1:11434", "local engine root URL, without /v1 (HTTP literal loopback address only)")
+	engineType := flags.String("engine-type", engineOllama, "engine API: ollama or openai (llama.cpp/vLLM)")
+	engineTokenPath := flags.String("engine-token-file", "", "optional local engine API key file; never sent to the hub")
 	ca := flags.String("ca-file", "", "additional trusted PEM CA certificates for the hub")
 	logLevel := flags.String("log-level", "info", "logging verbosity: debug, info, warn, or error")
 	if err := flags.Parse(args); err != nil {
@@ -173,6 +175,10 @@ func runWorker(ctx context.Context, args []string) error {
 	if !validWorkerID(*id) {
 		return fmt.Errorf("worker ID must be 1 to 64 letters, digits, dots, underscores, or hyphens")
 	}
+	if !validEngineType(*engineType) {
+		return fmt.Errorf("--engine-type must be ollama or openai")
+	}
+	settings := engineSettings{kind: *engineType}
 	u, err := hubURL(*address)
 	if err != nil {
 		return err
@@ -184,6 +190,15 @@ func runWorker(ctx context.Context, args []string) error {
 	token, err := tokenFile(*tokenPath)
 	if err != nil {
 		return err
+	}
+	if *engineTokenPath != "" {
+		settings.token, err = engineTokenFile(*engineTokenPath)
+		if err != nil {
+			return err
+		}
+		if settings.token == token {
+			return fmt.Errorf("engine token must differ from the worker credential")
+		}
 	}
 	config := &tls.Config{MinVersion: tls.VersionTLS12}
 	if *ca != "" {
@@ -213,7 +228,7 @@ func runWorker(ctx context.Context, args []string) error {
 	for ctx.Err() == nil {
 		started := time.Now()
 		logger.Info("connecting experimental CHAIR worker", "worker_id", *id)
-		_ = connectToHub(ctx, client, u, *id, token, target, logger, hardware)
+		_ = connectToHub(ctx, client, u, *id, token, target, logger, hardware, settings)
 		if ctx.Err() != nil {
 			break
 		}

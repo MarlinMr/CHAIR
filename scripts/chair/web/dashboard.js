@@ -35,6 +35,7 @@
             workers.set(worker.id, row);
         }
         const field = name => row.querySelector(`[data-field="${name}"]`);
+        field('engine').textContent = worker.engine_type;
         const badge = field('status').firstElementChild;
         badge.textContent = worker.status;
         badge.className = `badge ${worker.status === 'Ready' ? 'ready' : worker.status === 'Disconnected' ? 'muted' : 'warning'}`;

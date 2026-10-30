@@ -5,6 +5,8 @@
     const form = document.getElementById('enrollment-form');
     const id = document.getElementById('worker-id');
     const invitation = document.getElementById('enrollment-token');
+    const engineType = document.getElementById('worker-engine-type');
+    const engineURL = document.getElementById('worker-engine-url');
     const submit = document.getElementById('enroll-worker');
     const status = document.getElementById('enrollment-status');
     const result = document.getElementById('enrollment-result');
@@ -13,6 +15,11 @@
     let sending = false;
     let leaving = false;
     let pending;
+    engineType.addEventListener('change', () => {
+        if (['http://127.0.0.1:11434', 'http://127.0.0.1:8080'].includes(engineURL.value)) {
+            engineURL.value = engineType.value === 'openai' ? 'http://127.0.0.1:8080' : 'http://127.0.0.1:11434';
+        }
+    });
 
     function hideToken() {
         invitation.value = '';
@@ -53,11 +60,13 @@
             registered = true;
             id.disabled = true;
             invitation.disabled = true;
+            engineType.disabled = true;
+            engineURL.disabled = true;
             if (leaving) { hideToken(); return; }
             token.textContent = data.worker_token;
             result.hidden = false;
             const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
-            document.getElementById('worker-start-command').textContent = `chair worker --hub ${quote(location.origin)} --worker-id ${quote(data.worker_id)} --worker-token-file ${quote(`${data.worker_id}.token`)} --engine http://127.0.0.1:11434`;
+            document.getElementById('worker-start-command').textContent = `chair worker --hub ${quote(location.origin)} --worker-id ${quote(data.worker_id)} --worker-token-file ${quote(`${data.worker_id}.token`)} --engine-type ${quote(engineType.value)} --engine ${quote(engineURL.value)}`;
             status.textContent = 'Worker registered. Save the token now; it is shown only in this response. No request is automatically retried.';
         } catch {
             status.textContent = 'Enrollment response lost or unavailable. Registration may already have succeeded. Contact the hub operator before retrying.';

@@ -101,6 +101,7 @@ func TestWorkerConnection_RejectsInvalidHardwareBeforeUpgrade(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer "+testWorkerToken)
 	request.Header.Set(workerIDHeader, testWorkerID)
 	request.Header.Set("Sec-WebSocket-Protocol", protocol)
+	request.Header.Set(engineTypeHeader, engineOllama)
 	request.Header.Set(hardwareHeader, "not base64")
 	response := httptest.NewRecorder()
 

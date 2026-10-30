@@ -45,6 +45,7 @@ type dashboardWorker struct {
 	Inflight     int      `json:"inflight"`
 	InventoryAge string   `json:"inventory_age"`
 	Hardware     string   `json:"hardware"`
+	EngineType   string   `json:"engine_type"`
 }
 
 type dashboardView struct {
@@ -251,11 +252,12 @@ func (h *hub) dashboardSnapshot() dashboardView {
 	view := dashboardView{GeneratedAt: now, Authorized: len(h.workerTokens), Limit: cap(h.requests), Workers: make([]dashboardWorker, 0, len(h.workerTokens)), Jobs: make([]dashboardJob, 0, len(h.jobs))}
 	models := make(map[string]bool)
 	for id := range h.workerTokens {
-		row := dashboardWorker{ID: id, Status: "Disconnected", StatusClass: "muted", Models: []string{}, InventoryAge: "Never", Hardware: "Hardware unavailable"}
+		row := dashboardWorker{ID: id, Status: "Disconnected", StatusClass: "muted", Models: []string{}, InventoryAge: "Never", Hardware: "Hardware unavailable", EngineType: "Unavailable"}
 		if worker := h.workers[id]; !h.closed && worker != nil && !worker.session.IsClosed() {
 			view.Connected++
 			row.Inflight = worker.inflight
 			row.Hardware = worker.hardware.summary()
+			row.EngineType = worker.engineType
 			switch {
 			case worker.inventoryFailed:
 				row.Status, row.StatusClass = "Inventory unavailable", "warning"

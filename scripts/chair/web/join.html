@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
         <p class="refresh">Only enroll machines you control and trust to receive inference prompts. Registration is immediate, but the worker must still be started on your machine.</p>
         <form id="enrollment-form" class="enrollment-form" method="post" action="/join" autocomplete="off">
             <div class="form-field"><label for="worker-id">Worker ID</label><input id="worker-id" required minlength="1" maxlength="64" pattern="[A-Za-z0-9._\-]{1,64}" aria-describedby="worker-id-help"><p id="worker-id-help" class="muted">A unique name: 1–64 ASCII letters, digits, dots, underscores, or hyphens. Existing IDs cannot be replaced.</p></div>
+            <div class="form-field"><label for="worker-engine-type">Engine API</label><select id="worker-engine-type"><option value="ollama">Ollama</option><option value="openai">OpenAI-compatible (llama.cpp / vLLM)</option></select></div>
+            <div class="form-field"><label for="worker-engine-url">Local engine URL</label><input id="worker-engine-url" type="url" required value="http://127.0.0.1:11434" aria-describedby="worker-engine-help"><p id="worker-engine-help" class="muted">Root URL on the worker, not on this browser's machine. Use an HTTP literal loopback address with no /v1 suffix. Typical explicit ports: llama.cpp 8080, vLLM 8000.</p></div>
             <div class="form-field"><label for="enrollment-token">Shared enrollment token</label><input id="enrollment-token" type="password" required minlength="32" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="enrollment-token-help"><p id="enrollment-token-help" class="muted">This grants permission to add a worker. It is not your worker token or the inference API token.</p></div>
             <button id="enroll-worker" class="button" type="submit">Register worker</button>
         </form>
@@ -29,9 +31,10 @@ SPDX-License-Identifier: Apache-2.0
             <p><code id="enrolled-worker-token" class="secret-value"></code></p>
             <div class="actions"><button id="copy-worker-token" class="button" type="button">Copy worker token</button><button id="hide-worker-token" class="button" type="button">Hide worker token</button></div>
             <h2>Start your worker</h2>
-            <p>Save the token with the filename shown below. Start Ollama separately with the desired models, then run:</p>
+            <p>Save the token with the filename shown below. Start your selected engine separately with the desired models, then run:</p>
             <pre class="command"><code id="worker-start-command"></code></pre>
             <p class="muted">For a private/self-signed hub certificate, ask the operator for the public certificate and add <code>--ca-file hub.crt</code>. Never disable TLS verification or share the enrollment token with your engine.</p>
+            <p class="muted">If your local engine requires an API key, keep it on the worker and add <code>--engine-token-file engine.token</code>. Do not submit the engine key here.</p>
         </section>
     </main>
 </body>

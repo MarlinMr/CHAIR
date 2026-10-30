@@ -23,7 +23,7 @@ import (
 
 const (
 	workerPath                   = "/worker"
-	protocol                     = "chair-transport-v2"
+	protocol                     = "chair-transport-v3"
 	defaultMaxConcurrentRequests = 16
 	maxRequestBytes              = 8 << 20
 	connectionTimeout            = 10 * time.Second
@@ -154,17 +154,17 @@ func (s sessionListener) Addr() net.Addr {
 	return s.Session.LocalAddr()
 }
 
-func serveEngine(ctx context.Context, session *yamux.Session, target *url.URL, logger *slog.Logger) error {
+func serveEngine(ctx context.Context, session *yamux.Session, target *url.URL, logger *slog.Logger, engine engineSettings) error {
 	transport := localTransport()
 	defer transport.CloseIdleConnections()
-	proxy := inferenceProxy(target, transport, logger)
+	proxy := inferenceProxy(target, engineTransport{base: transport, token: engine.token}, logger)
 	server := &http.Server{
 		ReadHeaderTimeout: connectionTimeout,
 		MaxHeaderBytes:    64 << 10,
 		ErrorLog:          log.New(io.Discard, "", 0),
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !allowedRequest(r) {
+			if !allowedRequest(r) || !engineSupportsPath(engine.kind, r.URL.Path) {
 				writeAPIError(w, r, http.StatusNotFound, "unsupported inference route", "unsupported_route")
 				return
 			}
