@@ -391,7 +391,7 @@ func TestEngineRoutes_AllowOnlyTheConfiguredAPISubset(t *testing.T) {
 	test("no native inventory for generic engines", engineOpenAI, "/api/tags", false)
 	test("no vLLM administrative RPC", engineOpenAI, "/collective_rpc", false)
 	test("no llama.cpp slots", engineOpenAI, "/slots", false)
-	test("no Responses API", engineOpenAI, "/v1/responses", false)
+	test("Responses requires explicit capability", engineOpenAI, "/v1/responses", false)
 	test("no unknown engine", "unsupported", "/v1/models", false)
 }
 

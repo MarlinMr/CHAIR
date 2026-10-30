@@ -40,7 +40,7 @@ func allowedRequest(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case "/api/chat", "/api/generate", "/v1/chat/completions":
+	case "/api/chat", "/api/generate", "/v1/chat/completions", "/v1/responses":
 		return r.Method == http.MethodPost
 	case "/api/tags", "/v1/models":
 		return r.Method == http.MethodGet
@@ -164,7 +164,7 @@ func serveEngine(ctx context.Context, session *yamux.Session, target *url.URL, l
 		ErrorLog:          log.New(io.Discard, "", 0),
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !allowedRequest(r) || !engineSupportsPath(engine.kind, r.URL.Path) {
+			if !allowedRequest(r) || !engine.supportsPath(r.URL.Path) {
 				writeAPIError(w, r, http.StatusNotFound, "unsupported inference route", "unsupported_route")
 				return
 			}

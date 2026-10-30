@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,11 @@ type workerConnection struct {
 	inventoryFailed bool
 	hardware        workerHardware
 	engineType      string
+	responses       bool
+}
+
+func (w *workerConnection) supportsPath(path string) bool {
+	return (engineSettings{kind: w.engineType, responses: w.responses}).supportsPath(path)
 }
 
 type hub struct {
@@ -136,6 +142,11 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported engine type", http.StatusBadRequest)
 		return
 	}
+	responses := r.Header.Get(responsesHeader)
+	if (responses != "" && responses != "true" && responses != "false") || (responses == "true" && engineType != engineOpenAI) {
+		http.Error(w, "invalid Responses capability", http.StatusBadRequest)
+		return
+	}
 	hardware, err := decodeHardware(r.Header.Get(hardwareHeader))
 	if err != nil {
 		http.Error(w, "invalid hardware metadata", http.StatusBadRequest)
@@ -165,7 +176,7 @@ func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 		MaxResponseHeaderBytes: 64 << 10,
 	}
 	defer transport.CloseIdleConnections()
-	worker := &workerConnection{id: id, session: session, transport: transport, hardware: hardware, engineType: engineType}
+	worker := &workerConnection{id: id, session: session, transport: transport, hardware: hardware, engineType: engineType, responses: responses == "true"}
 	h.mu.Lock()
 	existing := h.workers[id]
 	if h.closed || (existing != nil && !existing.session.IsClosed()) {
@@ -245,7 +256,7 @@ func connectToHub(ctx context.Context, client *http.Client, address *url.URL, id
 	}
 	ws, response, err := websocket.Dial(ctx, address.String(), &websocket.DialOptions{
 		HTTPClient:   client,
-		HTTPHeader:   http.Header{"Authorization": {"Bearer " + token}, workerIDHeader: {id}, hardwareHeader: {base64.RawURLEncoding.EncodeToString(metadata)}, engineTypeHeader: {engine.kind}},
+		HTTPHeader:   http.Header{"Authorization": {"Bearer " + token}, workerIDHeader: {id}, hardwareHeader: {base64.RawURLEncoding.EncodeToString(metadata)}, engineTypeHeader: {engine.kind}, responsesHeader: {strconv.FormatBool(engine.responses)}},
 		Subprotocols: []string{protocol},
 	})
 	if err != nil {

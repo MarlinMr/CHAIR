@@ -203,7 +203,8 @@ func TestOpenAI_ReturnsStructuredHubErrors(t *testing.T) {
 	test("missing model", http.MethodPost, "/v1/chat/completions", testClientToken, `{}`, http.StatusBadRequest, "invalid_request_error", "invalid_request")
 	test("no eligible owner", http.MethodPost, "/v1/chat/completions", testClientToken, `{"model":"absent"}`, http.StatusBadGateway, "server_error", "model_unavailable")
 	test("no fresh inventories", http.MethodGet, "/v1/models", testClientToken, "", http.StatusServiceUnavailable, "server_error", "inventory_unavailable")
-	test("Responses API not exposed", http.MethodPost, "/v1/responses", testClientToken, `{}`, http.StatusNotFound, "invalid_request_error", "unsupported_route")
+	test("Responses requires a model", http.MethodPost, "/v1/responses", testClientToken, `{}`, http.StatusBadRequest, "invalid_request_error", "invalid_request")
+	test("Responses rejects storage", http.MethodPost, "/v1/responses", testClientToken, `{"model":"coder","store":true}`, http.StatusBadRequest, "invalid_request_error", "unsupported_response_state")
 }
 
 func TestOpenAI_PreservesEngineErrors(t *testing.T) {

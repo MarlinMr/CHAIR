@@ -41,9 +41,12 @@ stream and cancels the local engine request without closing other streams.
 - Ollama-native `POST /api/generate`, `POST /api/chat`, and `GET /api/tags`.
 - OpenAI-compatible `POST /v1/chat/completions` and `GET /v1/models`, including
   chat streaming and transparent tool-call forwarding to the selected engine.
+- Stateless `POST /v1/responses` on OpenAI-mode workers explicitly started with
+  `--enable-responses`, including native Responses SSE events and cancellation.
 - `--engine-type ollama` (default) discovers `/api/tags` and serves native plus
   OpenAI chat. `--engine-type openai` discovers `/v1/models` and serves only the
-  OpenAI Chat Completions subset. Types are explicit, never auto-detected.
+  OpenAI Chat Completions subset, plus optional Responses forwarding. Types and
+  Responses support are explicit, never auto-detected.
 - Optional read-only HTTPS dashboard showing worker connections, fresh model
   inventories, and active hub-routed jobs, protected by a separate credential.
 - End-to-end TLS to the hub, with system trust or an additional CA file.
@@ -82,7 +85,7 @@ stream and cancels the local engine request without closing other streams.
 
 **Not implemented:** per-user enrollment accounts/approval, worker certificates/mTLS,
 live credential revocation, GPU telemetry, queues, request deadlines,
-per-client quotas, other OpenAI endpoints (including Responses/embeddings),
+per-client quotas, stored/background Responses and other OpenAI endpoints (including embeddings),
 Anthropic compatibility, remote engine administration,
 desktop integration, service installation, or hub high availability. A stalled
 client can occupy a concurrency slot until it disconnects; do not expose this
@@ -645,8 +648,9 @@ returns `502`. OpenAI-mode matching does not add/remove tags, and request bodies
 are never rewritten to change a model ID. Discovery failures withdraw that
 worker's models until recovery, without trying another inventory dialect.
 
-Only `/v1/chat/completions` and `/v1/models` are exposed for OpenAI engines. Native
-llama.cpp/vLLM completion, Responses, embeddings, health, administrative, file,
+OpenAI engines expose `/v1/chat/completions`, `/v1/models`, and optionally stateless
+`/v1/responses` (see below). Native
+llama.cpp/vLLM completion, embeddings, health, administrative, file,
 model-loading, and server-tool endpoints are not exposed by CHAIR. Even through
 Chat Completions, an engine may have its own server-side tools or URL/media
 fetching behavior: leave those disabled unless intended. CHAIR does not sandbox
@@ -704,9 +708,67 @@ selection work exactly as for the native Ollama routes.
 Hub-generated errors on `/v1/` use an OpenAI-shaped JSON `error` object; engine
 HTTP errors are passed through with their status/body unchanged. There is no
 automatic job replay, although a client SDK may independently retry failed calls.
-This is the **Chat Completions subset**, not the entire OpenAI API: Responses,
-embeddings, individual-model retrieval, audio, files, and assistants are not exposed.
+This is a **Chat Completions and stateless Responses subset**, not the entire
+OpenAI API: embeddings, individual-model retrieval, audio, files, and assistants
+are not exposed.
 Only the documented methods/paths with no query string are accepted.
+
+### Stateless Responses API
+
+If your engine/version supports OpenAI's Responses API natively, add
+`--enable-responses` to that worker's `--engine-type openai` command. Upgrade the
+hub and participating workers to this build. This is an explicit operator
+capability declaration, not a probe or a guarantee that every engine/model
+supports Responses. It is disabled by default and unavailable in Ollama mode.
+Existing transport-v3 workers may still serve chat, but cannot receive Responses
+without advertising this capability; no reenrollment is needed.
+
+```bash
+./chair worker \
+  --hub https://hub.example.internal:8443 \
+  --worker-id vllm-gpu --worker-token-file vllm-gpu.token \
+  --ca-file private-ca.crt \
+  --engine-type openai --engine http://127.0.0.1:8000 --enable-responses
+
+curl --no-buffer --cacert private-ca.crt \
+  --header "Authorization: Bearer $(cat client.token)" \
+  --header 'Content-Type: application/json' \
+  --data '{"model":"vllm-coder","input":"Hello","store":false,"stream":true}' \
+  https://hub.example.internal:8443/v1/responses
+```
+
+- **`store: false` is required explicitly.** Omitted, null, or true storage is
+  rejected with `400` (`unsupported_response_state`) before dispatch, rather than
+  relying on an engine's storage default. CHAIR forwards the body unchanged.
+- Background execution is unsupported (`background` must be absent, null, or
+  false). `previous_response_id` and `conversation` must be absent or null;
+  `item_reference` input items are rejected. Duplicate JSON keys and noncanonical
+  control-key spellings are rejected to avoid ambiguous state controls.
+- Multi-turn and client function-tool workflows must resend **inline history**:
+  input messages, output items, function calls and `function_call_output` items.
+  Inline reasoning/encrypted content is forwarded if supported by the engine.
+  There is no response-ID affinity, response storage, or conversation service.
+- Only exact advertised model IDs on fresh, Responses-enabled workers are
+  eligible. A matching model on a chat-only or Ollama worker is not sufficient;
+  with no eligible owner the hub returns `502`. `/v1/models` is still the union of
+  all engines, not a per-model guarantee of Responses support.
+- Native Responses bodies, usage, reasoning/tool-call fields, errors, and SSE
+  events (including `response.completed`) pass through without translation or
+  artificial Chat Completions `[DONE]` markers. CHAIR does not convert Chat
+  Completions to Responses or implement hosted tools. Engine errors, including
+  `404` for an incorrectly enabled engine, pass through without automatic retry.
+- Client disconnect/cancellation stops the in-flight HTTP request. Jobs use the
+  same global concurrency limit, dashboard tracking, credential isolation, and
+  no-content-logging policy as chat. Actual generation cancellation and storage
+  behavior remain engine responsibilities; use a trusted engine.
+- Retrieval/deletion, `/responses/{id}/input_items`, background cancellation,
+  `/responses/compact`, and other subroutes are not exposed (`404`). No engine
+  file/vector/conversation stores are made available through CHAIR.
+
+Tests exercise API-shaped fake engines, not live Responses-capable engines or
+end-to-end SDK/agent workflows. Check your engine/version's API documentation
+and validate it locally before enabling the flag. The join page's generated
+command does not enable Responses; append the flag deliberately when supported.
 
 ### OpenCode V2 configuration
 

@@ -13,13 +13,22 @@ import (
 
 const (
 	engineTypeHeader = "X-Chair-Engine-Type"
+	responsesHeader  = "X-Chair-Responses"
 	engineOllama     = "ollama"
 	engineOpenAI     = "openai"
 )
 
 type engineSettings struct {
-	kind  string
-	token string
+	kind      string
+	token     string
+	responses bool
+}
+
+func (e engineSettings) supportsPath(path string) bool {
+	if path == "/v1/responses" {
+		return e.kind == engineOpenAI && e.responses
+	}
+	return engineSupportsPath(e.kind, path)
 }
 
 func validEngineType(kind string) bool { return kind == engineOllama || kind == engineOpenAI }

@@ -158,6 +158,7 @@ func runWorker(ctx context.Context, args []string) error {
 	id := flags.String("worker-id", "", "stable worker ID authorized in the hub's workers file")
 	engine := flags.String("engine", "http://127.0.0.1:11434", "local engine root URL, without /v1 (HTTP literal loopback address only)")
 	engineType := flags.String("engine-type", engineOllama, "engine API: ollama or openai (llama.cpp/vLLM)")
+	responses := flags.Bool("enable-responses", false, "enable stateless /v1/responses routing; requires openai mode and engine support")
 	engineTokenPath := flags.String("engine-token-file", "", "optional local engine API key file; never sent to the hub")
 	ca := flags.String("ca-file", "", "additional trusted PEM CA certificates for the hub")
 	logLevel := flags.String("log-level", "info", "logging verbosity: debug, info, warn, or error")
@@ -178,7 +179,10 @@ func runWorker(ctx context.Context, args []string) error {
 	if !validEngineType(*engineType) {
 		return fmt.Errorf("--engine-type must be ollama or openai")
 	}
-	settings := engineSettings{kind: *engineType}
+	if *responses && *engineType != engineOpenAI {
+		return fmt.Errorf("--enable-responses requires --engine-type openai")
+	}
+	settings := engineSettings{kind: *engineType, responses: *responses}
 	u, err := hubURL(*address)
 	if err != nil {
 		return err

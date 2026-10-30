@@ -189,7 +189,7 @@ func (h *hub) serveModels(w http.ResponseWriter, r *http.Request) {
 	workers := make([]*workerConnection, 0, len(h.workers))
 	if !h.closed {
 		for _, worker := range h.workers {
-			if worker.ready(time.Now()) && engineSupportsPath(worker.engineType, r.URL.Path) {
+			if worker.ready(time.Now()) && worker.supportsPath(r.URL.Path) {
 				workers = append(workers, worker)
 			}
 		}
@@ -250,7 +250,7 @@ func (h *hub) reserveWorker(model, path string) *workerConnection {
 	// An exact advertised OpenAI ID must not lose to Ollama's convenience alias.
 	exact := false
 	for _, worker := range h.workers {
-		if worker.ready(now) && engineSupportsPath(worker.engineType, path) {
+		if worker.ready(now) && worker.supportsPath(path) {
 			if _, owns := worker.models[model]; owns {
 				exact = true
 				break
@@ -259,7 +259,7 @@ func (h *hub) reserveWorker(model, path string) *workerConnection {
 	}
 	var selected *workerConnection
 	for _, worker := range h.workers {
-		if !worker.ready(now) || !engineSupportsPath(worker.engineType, path) {
+		if !worker.ready(now) || !worker.supportsPath(path) {
 			continue
 		}
 		key := model
@@ -299,6 +299,10 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.Unmarshal(body, &request); err != nil || !validModel(request.Model) {
 		writeAPIError(w, r, http.StatusBadRequest, "request must be a JSON object with a nonempty model", "invalid_request")
+		return
+	}
+	if r.URL.Path == "/v1/responses" && !validStatelessResponse(body) {
+		writeAPIError(w, r, http.StatusBadRequest, "Responses requires store:false, no background execution, and inline history without previous_response_id, conversation, or item_reference", "unsupported_response_state")
 		return
 	}
 	worker := h.reserveWorker(request.Model, r.URL.Path)

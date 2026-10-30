@@ -14,7 +14,9 @@ The hub matches requests to advertised models from **Ollama, llama.cpp, and vLLM
 and distributes concurrent work among eligible workers. Use `--engine-type openai`
 for llama.cpp/vLLM workers. Clients can use the OpenAI-compatible Chat
 Completions API at the hub's `/v1` base URL; see the setup guide for OpenCode V2
-configuration and the supported API subset.
+configuration and the supported API subset. Engines with native Responses support
+can opt in to stateless `/v1/responses` forwarding with `--enable-responses`;
+requests require `store: false` and inline conversation history.
 An optional authenticated web dashboard shows workers, their models, and active
 jobs at the hub's HTTPS address (`--dashboard-token-file`; use `--listen :443`
 for standard HTTPS).
