@@ -359,7 +359,8 @@ func TestWorkerCredentials_RejectsAmbiguousOrInvalidConfiguration(t *testing.T) 
 			assert.Error(t, err)
 		})
 	}
-	test("empty list", `{"workers":[]}`)
+	test("missing worker list", `{}`)
+	test("null worker list", `{"workers":null}`)
 	test("unknown fields", `{"workers":[],"typo":true}`)
 	test("malformed JSON", `{`)
 	test("short credential", `{"workers":[{"id":"gpu-a","token":"short"}]}`)
@@ -377,4 +378,11 @@ func TestWorkerCredentials_LoadsDistinctIdentitiesAndCredentials(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"gpu-a": testWorkerToken, "gpu-b": secondWorkerToken}, tokens)
+}
+
+func TestWorkerCredentials_AllowsAnEmptyClusterBeforeEnrollment(t *testing.T) {
+	tokens, err := readWorkerTokens(strings.NewReader(`{"workers":[]}`), testClientToken)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{}, tokens)
 }

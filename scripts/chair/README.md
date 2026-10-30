@@ -36,7 +36,8 @@ stream and cancels the local engine request without closing other streams.
 ## Current scope
 
 - Multiple active workers, each backed by a separately running local
-  Ollama-compatible engine. Provision 1–256 authorized worker IDs on the hub.
+  Ollama-compatible engine. Up to 256 authorized worker IDs; an empty registry
+  can be used before enrolling the first worker.
 - Ollama-native `POST /api/generate`, `POST /api/chat`, and `GET /api/tags`.
 - OpenAI-compatible `POST /v1/chat/completions` and `GET /v1/models`, including
   chat streaming and transparent tool-call forwarding to Ollama's own API.
@@ -46,6 +47,8 @@ stream and cancels the local engine request without closing other streams.
 - Operator-provisioned identities and a distinct bearer token for each worker,
   separate from the client token. One live connection per authorized identity;
   another worker cannot use its own token to claim a different identity.
+- Optional shared-token enrollment generates a worker's unique token, persists
+  its registration, and authorizes it immediately without restarting the hub.
 - Configurable concurrent inference requests globally (`--max-concurrent-requests`,
   default **16**), 8 MiB request bodies, 64 KiB response headers,
   and a five-minute wait for engine response headers. Responses stream without
@@ -74,7 +77,7 @@ stream and cancels the local engine request without closing other streams.
   forwarding or engine administration is exposed. Client credentials and cookies
   are not sent to the worker's engine. Inference contents are never logged.
 
-**Not implemented:** interactive enrollment, worker certificates/mTLS,
+**Not implemented:** per-user enrollment accounts/approval, worker certificates/mTLS,
 live credential revocation, GPU telemetry, queues, request deadlines,
 per-client quotas, other OpenAI endpoints (including Responses/embeddings),
 Anthropic compatibility, remote engine administration,
@@ -391,6 +394,94 @@ dashboard credentials and use a private browser session on shared machines.
 Turning the option off requires a hub restart; rotate the client token and
 restart the hub if a revealed credential needs to be invalidated.
 
+### Optional worker enrollment
+
+Enrollment is **disabled by default**. Generate a separate shared invitation
+credential on the hub and distribute it only to trusted worker operators:
+
+```bash
+umask 077
+openssl rand -hex 32 > enrollment.token
+```
+
+Add **`--enrollment-token-file enrollment.token`** to your normal hub command.
+The enrollment token must differ from the client token, dashboard token, and
+every worker token. It grants permission to add workers, not permission to run
+inference as a client or connect as an existing worker.
+
+Users visit **`https://your-hub/join`**, enter their desired worker ID and the
+shared enrollment token, and select **Register worker**. The hub generates a
+cryptographically random, unique 64-character worker token and returns it only
+in the successful enrollment response. No dashboard password is needed. `/join`
+and its dedicated script/shared stylesheet are accessible when enrollment is on,
+even if the dashboard is private or disabled; private cluster status and
+client-token reveal keep their existing access controls.
+
+The page offers **Copy worker token**, **Hide worker token**, and a worker-start
+command containing the ID and token-file path, **not** the token itself. Save
+the token to that file on the worker, restrict its permissions (owner-only on
+POSIX, an appropriate ACL on Windows), and run the displayed command. Windows
+users should use `chair.exe`; the quoted command is suitable for a POSIX shell
+or PowerShell, with paths adjusted as needed. Start Ollama separately first, and
+add `--ca-file hub.crt` when using a private/self-signed certificate. The worker
+then connects normally and appears as Ready once it reports a fresh inventory.
+
+**Save the token before hiding it, reloading, or leaving the page.** There is no
+API to retrieve an existing worker's token, and an existing ID can never be
+overwritten through enrollment. The form does not automatically retry POSTs.
+If the response is lost, registration may already have committed: contact the
+operator instead of repeatedly submitting or choosing new IDs. An operator can
+securely recover the credential from the owner-only registry, or rotate it by
+stopping the hub, updating the registry, and restarting. Copying a token leaves
+it in the clipboard until you clear or replace it.
+
+#### Registry persistence and operational limits
+
+`--workers-file` remains the single authoritative registry. For a **new** empty
+cluster, create a new owner-only registry containing:
+
+```json
+{ "workers": [] }
+```
+
+Do not overwrite an existing registry to enable enrollment. Each successful
+registration preserves existing entries and writes the complete registry using
+a same-directory temporary file, file sync, and replacement. On POSIX the new
+file is owner-readable/writable only (`0600`); protect the directory and use
+Windows ACLs as appropriate. The hub needs write access to the parent directory,
+not just the existing file. The registry must be a regular file, not a symlink.
+Crash durability depends on OS/filesystem behavior; keep private backups.
+
+**Use one hub per registry and stop it before manual edits.** Enrollment checks
+the parsed on-disk contents against the live registry before each write and
+refuses a detected mismatch; it does not lock out other processes or editors.
+Concurrent enrollments within one hub are serialized, and a worker is activated
+only after its registry replacement succeeds. Registered workers survive a hub
+restart, including when enrollment is subsequently disabled. New workers appear
+in the dashboard without closing existing expanded lists.
+
+There are at most 256 workers and a 1 MiB registry. The enrollment endpoint
+limits request bodies to 16 KiB, body reads to five seconds, and attempts to
+**30 per minute globally per hub**, including failed credential attempts. Excess
+attempts receive `429` with `Retry-After`; this is not a substitute for network
+access controls. HTTPS, same-origin requests, JSON, and an explicit action header
+are required for POST `/join`. Enrollment/worker tokens are absent from normal
+pages, status snapshots, URLs, and logs; no cookies or browser storage are used.
+
+The JSON request has `worker_id` and `enrollment_token` fields; clients must send
+`Content-Type: application/json`, a matching HTTPS `Origin`, and
+`X-Chair-Enroll: 1`. A successful `201` response contains `worker_id` and the
+generated `worker_token`. Invalid credentials receive `401`; duplicate IDs or
+worker capacity receive `409`; registry failures receive `503` without authorizing
+the new worker. Caller-supplied worker tokens are not accepted.
+
+**Anyone holding the enrollment token can add a machine that receives inference
+prompts and supplies responses.** A worker is not trustworthy merely because it
+enrolled. Limit enrollment to trusted operators and networks. To stop new
+enrollments, remove the flag and restart, or rotate the enrollment token and
+restart. This does not revoke previously issued worker tokens: audit the
+registry and remove unwanted workers while the hub is stopped, then restart.
+
 ### Logging
 
 Both commands accept `--log-level debug|info|warn|error` (default `info`). Logs are
@@ -574,8 +665,9 @@ Automated tests exercise TLS tunnels to multiple fake local engines, including
 simultaneous dispatch, inventory updates, credential isolation, and disconnects;
 they do not prove cross-subnet firewall behavior or real GPU execution.
 
-Changing authorized identities or credentials requires restarting the relevant
-processes. Stopping the hub disconnects every worker and active request; there is
+Enrollment adds authorized workers without a restart. Other manual changes to
+identities or credentials require restarting the relevant processes. Stopping
+the hub disconnects every worker and active request; there is
 no job persistence or hub failover. Workers do not need to be reachable from one
 another or from new hub-initiated connections.
 
@@ -598,7 +690,8 @@ On Linux, missing browser system dependencies can be
 installed with `npx playwright install --with-deps chromium`. Tests start a local
 TLS hub, worker, and fake engine using temporary test-only credentials; no real
 engine or GPU inference is used. They check expansion/focus preservation, safe
-model rendering, polling pause/resume, and failed-update behavior. Playwright is
+model rendering, polling pause/resume, failed-update behavior, and enrollment's
+one-time credentials, persistence, duplicate rejection, and live worker rows. Playwright is
 a test-only dependency, not part of the executable or dashboard.
 
 ## Dependencies and integration boundary

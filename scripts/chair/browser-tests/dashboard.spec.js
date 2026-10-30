@@ -12,6 +12,7 @@ import { once } from 'node:events';
 const password = 'dashboard-browser-test-credential-not-for-real-use';
 const clientToken = 'client-browser-test-credential-not-for-real-use';
 const workerToken = 'worker-browser-test-credential-not-for-real-use';
+const enrollmentToken = 'enrollment-browser-test-credential-not-for-real-use';
 test.use({ ignoreHTTPSErrors: true, httpCredentials: { username: 'chair', password } });
 let directory, engine, hubProcess, workerProcess, url, api;
 
@@ -27,7 +28,7 @@ test.beforeAll(async () => {
     const binary = process.env.CHAIR_TEST_BINARY;
     if (!binary) throw new Error('Set CHAIR_TEST_BINARY to an absolute path to the built chair executable.');
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-keyout', join(directory, 'hub.key'), '-out', join(directory, 'hub.crt'), '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'ignore' });
-    for (const [name, content] of Object.entries({ 'client.token': clientToken, 'worker.token': workerToken, 'dashboard.token': password, 'workers.json': JSON.stringify({ workers: [{ id: 'gpu-test', token: workerToken }] }) })) {
+    for (const [name, content] of Object.entries({ 'client.token': clientToken, 'worker.token': workerToken, 'dashboard.token': password, 'enrollment.token': enrollmentToken, 'workers.json': JSON.stringify({ workers: [{ id: 'gpu-test', token: workerToken }] }) })) {
         await writeFile(join(directory, name), content, { mode: 0o600 });
     }
     await mkdir(join(directory, 'downloads'), { mode: 0o700 });
@@ -43,7 +44,7 @@ test.beforeAll(async () => {
     await new Promise(done => reservation.close(done));
     url = `https://127.0.0.1:${port}`;
     const launch = args => spawn(resolve(binary), args, { cwd: directory, stdio: 'ignore' });
-    hubProcess = launch(['hub', '--listen', `127.0.0.1:${port}`, '--tls-cert', 'hub.crt', '--tls-key', 'hub.key', '--client-token-file', 'client.token', '--workers-file', 'workers.json', '--dashboard-token-file', 'dashboard.token', '--dashboard-public', '--allow-client-token-reveal', '--downloads-dir', 'downloads']);
+    hubProcess = launch(['hub', '--listen', `127.0.0.1:${port}`, '--tls-cert', 'hub.crt', '--tls-key', 'hub.key', '--client-token-file', 'client.token', '--workers-file', 'workers.json', '--dashboard-token-file', 'dashboard.token', '--dashboard-public', '--allow-client-token-reveal', '--downloads-dir', 'downloads', '--enrollment-token-file', 'enrollment.token']);
     api = await request.newContext({ ignoreHTTPSErrors: true, httpCredentials: { username: 'chair', password } });
     await expect.poll(async () => {
         try { return (await api.get(url)).status(); } catch { return 0; }
@@ -195,4 +196,83 @@ test('authenticated users explicitly reveal, copy, and hide the client token', a
     await expect(page.locator('#client-token-panel')).toBeHidden();
     const snapshot = await (await api.get(`${url}/dashboard/status`)).json();
     expect(JSON.stringify(snapshot)).not.toContain(clientToken);
+});
+
+test('enrollment returns a generated token once and adds a live dashboard row', async ({ browser }) => {
+    const anonymous = await browser.newContext({ ignoreHTTPSErrors: true, httpCredentials: undefined });
+    try {
+        const overview = await anonymous.newPage();
+        await overview.goto(`${url}/?refresh=off`);
+        const models = overview.locator('[data-worker="gpu-test"] [data-field="models"]');
+        await models.locator('summary').click();
+        const page = await anonymous.newPage();
+        let submissions = 0;
+        page.on('request', req => { if (req.method() === 'POST' && req.url() === `${url}/join`) submissions++; });
+        await page.goto(`${url}/join`);
+        expect(await page.content()).not.toContain(enrollmentToken);
+        await page.screenshot({ path: test.info().outputPath('join-desktop.png'), fullPage: true });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await expect(page.locator('.brand')).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        await page.screenshot({ path: test.info().outputPath('join-mobile.png'), fullPage: true });
+        await page.getByLabel('Worker ID', { exact: true }).fill('browser-enrolled-gpu');
+        await page.getByLabel('Shared enrollment token', { exact: true }).fill(enrollmentToken);
+
+        await page.getByRole('button', { name: 'Register worker' }).click();
+
+        await expect(page.locator('#enrollment-result')).toBeVisible();
+        const token = await page.locator('#enrolled-worker-token').textContent();
+        expect(token).toMatch(/^[0-9a-f]{64}$/);
+        expect(submissions).toBe(1);
+        await expect(page.locator('#enrollment-token')).toHaveValue('');
+        await expect(page.locator('#enroll-worker')).toBeDisabled();
+        await expect(page.locator('#worker-start-command')).toContainText('browser-enrolled-gpu.token');
+        expect(await page.locator('#worker-start-command').textContent()).not.toContain(token);
+        const saved = JSON.parse(await readFile(join(directory, 'workers.json'), 'utf8'));
+        expect(saved.workers.find(worker => worker.id === 'browser-enrolled-gpu').token).toBe(token);
+        await anonymous.grantPermissions(['clipboard-read', 'clipboard-write']);
+        await page.getByRole('button', { name: 'Copy worker token' }).click();
+        await expect(page.locator('#enrollment-status')).toContainText('Worker token copied');
+        expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(token);
+        await page.getByRole('button', { name: 'Hide worker token' }).click();
+        await expect(page.locator('#enrolled-worker-token')).toBeEmpty();
+
+        await overview.bringToFront();
+        await overview.locator('#refresh-now').click();
+        await expect(overview.locator('[data-worker="browser-enrolled-gpu"]')).toContainText('Disconnected');
+        await expect(models).toHaveAttribute('open', '');
+        expect(await overview.content()).not.toContain(token);
+
+        await page.bringToFront();
+        await page.reload();
+        await expect(page.locator('#enrollment-result')).toBeHidden();
+        expect(await page.content()).not.toContain(token);
+        expect(submissions).toBe(1);
+        await page.getByLabel('Worker ID', { exact: true }).fill('browser-enrolled-gpu');
+        await page.getByLabel('Shared enrollment token', { exact: true }).fill(enrollmentToken);
+        await page.getByRole('button', { name: 'Register worker' }).click();
+        await expect(page.locator('#enrollment-status')).toContainText('already registered');
+        await expect(page.locator('#enrollment-result')).toBeHidden();
+        expect(await page.content()).not.toContain(token);
+    } finally {
+        await anonymous.close();
+    }
+});
+
+test('invalid enrollment credentials do not register a worker or retry automatically', async ({ page }) => {
+    const before = await readFile(join(directory, 'workers.json'), 'utf8');
+    let submissions = 0;
+    page.on('request', req => { if (req.method() === 'POST' && req.url() === `${url}/join`) submissions++; });
+    await page.goto(`${url}/join`);
+    await page.clock.install();
+    await page.getByLabel('Worker ID', { exact: true }).fill('unauthorized-gpu');
+    await page.getByLabel('Shared enrollment token', { exact: true }).fill(password);
+
+    await page.getByRole('button', { name: 'Register worker' }).click();
+
+    await expect(page.locator('#enrollment-status')).toContainText('Invalid enrollment token');
+    await expect(page.locator('#enrollment-result')).toBeHidden();
+    await page.clock.fastForward(20000);
+    expect(submissions).toBe(1);
+    expect(await readFile(join(directory, 'workers.json'), 'utf8')).toBe(before);
 });

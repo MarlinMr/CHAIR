@@ -11,6 +11,15 @@ import (
 	"strings"
 )
 
+type workerCredential struct {
+	ID    string `json:"id"`
+	Token string `json:"token"`
+}
+
+type workerCredentials struct {
+	Workers []workerCredential `json:"workers"`
+}
+
 func validWorkerID(id string) bool {
 	if len(id) == 0 || len(id) > 64 {
 		return false
@@ -29,20 +38,15 @@ func readWorkerTokens(reader io.Reader, clientToken string) (map[string]string, 
 	if err != nil || len(body) > maxInventoryBytes {
 		return nil, fmt.Errorf("worker credentials file unreadable or oversized")
 	}
-	var config struct {
-		Workers []struct {
-			ID    string `json:"id"`
-			Token string `json:"token"`
-		} `json:"workers"`
-	}
+	var config workerCredentials
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&config); err != nil {
 		// JSON errors can contain credentials. Return only a fixed diagnostic.
 		return nil, fmt.Errorf("invalid worker credentials JSON")
 	}
-	if decoder.Decode(&struct{}{}) != io.EOF || len(config.Workers) == 0 || len(config.Workers) > 256 {
-		return nil, fmt.Errorf("worker credentials must contain one JSON object with 1 to 256 workers")
+	if decoder.Decode(&struct{}{}) != io.EOF || config.Workers == nil || len(config.Workers) > 256 {
+		return nil, fmt.Errorf("worker credentials must contain one JSON object with 0 to 256 workers")
 	}
 	tokens := make(map[string]string, len(config.Workers))
 	seenTokens := map[string]bool{clientToken: true}

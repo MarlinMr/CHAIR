@@ -50,12 +50,17 @@ type hub struct {
 	dashboardPublic        bool
 	allowClientTokenReveal bool
 	downloadsRoot          *os.Root
+	enrollment             *workerEnrollment
 }
 
 func newHub(clientToken string, workerTokens map[string]string, maxConcurrentRequests int) *hub {
+	tokens := make(map[string]string, len(workerTokens))
+	for id, token := range workerTokens {
+		tokens[id] = token
+	}
 	return &hub{
 		clientToken:  clientToken,
-		workerTokens: workerTokens,
+		workerTokens: tokens,
 		workers:      make(map[string]*workerConnection),
 		requests:     make(chan struct{}, maxConcurrentRequests),
 		logger:       slog.Default(),
@@ -64,7 +69,7 @@ func newHub(clientToken string, workerTokens map[string]string, maxConcurrentReq
 }
 
 func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/dashboard/") {
+	if r.URL.Path == "/" || r.URL.Path == "/join" || strings.HasPrefix(r.URL.Path, "/dashboard/") {
 		h.serveDashboard(w, r)
 		return
 	}
@@ -108,7 +113,9 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *hub) connectWorker(w http.ResponseWriter, r *http.Request) {
 	id := r.Header.Get(workerIDHeader)
+	h.mu.Lock()
 	token, known := h.workerTokens[id]
+	h.mu.Unlock()
 	if !known || !authenticated(r, token) {
 		h.logger.Warn("worker connection rejected", "reason", "worker_authentication_failed")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

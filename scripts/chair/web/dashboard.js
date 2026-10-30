@@ -22,10 +22,18 @@
     }
 
     function updateWorker(worker) {
-        // Worker IDs are fixed by hub configuration. Keep each existing row,
-        // including its details nodes, so expansion and keyboard focus survive.
-        const row = workers.get(worker.id);
-        if (!row) return;
+        // Keep existing details/focus while adding newly enrolled workers.
+        let row = workers.get(worker.id);
+        if (!row) {
+            row = document.getElementById('worker-row-template').content.firstElementChild.cloneNode(true);
+            row.dataset.worker = worker.id;
+            row.querySelector('[data-field="id"]').textContent = worker.id;
+            const table = document.getElementById('workers');
+            table.querySelectorAll('tr:not([data-worker])').forEach(empty => empty.remove());
+            const next = Array.from(table.querySelectorAll('[data-worker]')).find(existing => existing.dataset.worker > worker.id);
+            table.insertBefore(row, next || null);
+            workers.set(worker.id, row);
+        }
         const field = name => row.querySelector(`[data-field="${name}"]`);
         const badge = field('status').firstElementChild;
         badge.textContent = worker.status;

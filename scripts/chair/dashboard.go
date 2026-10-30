@@ -18,10 +18,11 @@ import (
 	"time"
 )
 
-//go:embed web/dashboard.html web/dashboard.css web/dashboard.js README.md
+//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js README.md
 var dashboardAssets embed.FS
 
 var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "web/dashboard.html"))
+var joinTemplate = template.Must(template.ParseFS(dashboardAssets, "web/join.html"))
 
 type activeJob struct {
 	ID        uint64    `json:"id"`
@@ -47,24 +48,27 @@ type dashboardWorker struct {
 }
 
 type dashboardView struct {
-	GeneratedAt      time.Time           `json:"generated_at"`
-	Authorized       int                 `json:"authorized_workers"`
-	Connected        int                 `json:"connected_workers"`
-	Ready            int                 `json:"ready_workers"`
-	Models           int                 `json:"available_models"`
-	Limit            int                 `json:"max_concurrent_requests"`
-	Workers          []dashboardWorker   `json:"workers"`
-	Jobs             []dashboardJob      `json:"jobs"`
-	Live             bool                `json:"-"`
-	PagePath         string              `json:"-"`
-	Public           bool                `json:"-"`
-	RevealEnabled    bool                `json:"-"`
-	Authenticated    bool                `json:"-"`
-	Downloads        []dashboardDownload `json:"-"`
-	DownloadsEnabled bool                `json:"-"`
+	GeneratedAt       time.Time           `json:"generated_at"`
+	Authorized        int                 `json:"authorized_workers"`
+	Connected         int                 `json:"connected_workers"`
+	Ready             int                 `json:"ready_workers"`
+	Models            int                 `json:"available_models"`
+	Limit             int                 `json:"max_concurrent_requests"`
+	Workers           []dashboardWorker   `json:"workers"`
+	Jobs              []dashboardJob      `json:"jobs"`
+	Live              bool                `json:"-"`
+	PagePath          string              `json:"-"`
+	Public            bool                `json:"-"`
+	RevealEnabled     bool                `json:"-"`
+	Authenticated     bool                `json:"-"`
+	Downloads         []dashboardDownload `json:"-"`
+	DownloadsEnabled  bool                `json:"-"`
+	EnrollmentEnabled bool                `json:"-"`
 }
 
 func (h *hub) enableDashboard(token string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if token == "" || token == h.clientToken {
 		return fmt.Errorf("dashboard token must be distinct from client and worker tokens")
 	}
@@ -110,7 +114,13 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "TLS required", http.StatusForbidden)
 		return
 	}
-	if h.dashboardToken == "" && !h.dashboardPublic {
+	join := r.URL.Path == "/join"
+	if (join || r.URL.Path == "/dashboard/enrollment.js") && h.enrollment == nil {
+		http.NotFound(w, r)
+		return
+	}
+	joinAsset := h.enrollment != nil && (r.URL.Path == "/dashboard/style.css" || r.URL.Path == "/dashboard/enrollment.js")
+	if h.dashboardToken == "" && !h.dashboardPublic && !join && !joinAsset {
 		http.NotFound(w, r)
 		return
 	}
@@ -121,32 +131,60 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	method := http.MethodGet
-	if reveal {
+	if reveal || (join && r.Method == http.MethodPost) {
 		method = http.MethodPost
 	}
 	if r.Method != method {
 		w.Header().Set("Allow", method)
+		if join {
+			w.Header().Set("Allow", "GET, POST")
+		}
 		http.Error(w, "unsupported dashboard method", http.StatusMethodNotAllowed)
 		return
 	}
 	paused := (r.URL.Path == "/" || access) && r.URL.RawQuery == "refresh=off"
-	publicNavigation := h.dashboardPublic && !reveal && !access && r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
+	action := reveal || (join && r.Method == http.MethodPost)
+	publicNavigation := (h.dashboardPublic || join) && !action && !access && r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
 	crossSite := r.Header.Get("Sec-Fetch-Site") == "cross-site" && !publicNavigation
 	if (r.URL.RawQuery != "" && !paused) || (r.Header.Get("Origin") != "" && !sameDashboardOrigin(r.Header.Get("Origin"), r.Host)) || crossSite {
 		http.Error(w, "cross-origin requests and unsupported query strings are not accepted", http.StatusForbidden)
 		return
 	}
-	if reveal && (r.Header.Get("Origin") == "" || r.Header.Get("X-Chair-Token-Reveal") != "1") {
-		http.Error(w, "explicit same-origin reveal required", http.StatusForbidden)
+	marker := "X-Chair-Token-Reveal"
+	if join {
+		marker = "X-Chair-Enroll"
+	}
+	if action && (r.Header.Get("Origin") == "" || r.Header.Get(marker) != "1") {
+		http.Error(w, "explicit same-origin action required", http.StatusForbidden)
 		return
 	}
 	authenticated := h.dashboardAuthenticated(r)
-	if (!h.dashboardPublic || reveal || access) && !authenticated {
+	if ((!h.dashboardPublic && !join && !joinAsset) || reveal || access) && !authenticated {
 		w.Header().Set("WWW-Authenticate", `Basic realm="CHAIR dashboard", charset="UTF-8"`)
 		http.Error(w, "dashboard authentication required", http.StatusUnauthorized)
 		return
 	}
 	switch r.URL.Path {
+	case "/join":
+		if r.Method == http.MethodPost {
+			h.serveEnrollment(w, r)
+			return
+		}
+		var page bytes.Buffer
+		if err := joinTemplate.Execute(&page, nil); err != nil {
+			http.Error(w, "join page unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(page.Bytes())
+	case "/dashboard/enrollment.js":
+		script, err := dashboardAssets.ReadFile("web/enrollment.js")
+		if err != nil {
+			http.Error(w, "enrollment script unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write(script)
 	case "/dashboard/client-token":
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(struct {
@@ -190,6 +228,7 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		view.Authenticated = authenticated
 		view.Downloads = h.dashboardDownloads()
 		view.DownloadsEnabled = h.downloadsRoot != nil
+		view.EnrollmentEnabled = h.enrollment != nil
 		if err := dashboardTemplate.Execute(&page, view); err != nil {
 			http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
 			return

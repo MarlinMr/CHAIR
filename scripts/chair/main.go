@@ -66,6 +66,7 @@ func runHub(ctx context.Context, args []string) error {
 	dashboardPublic := flags.Bool("dashboard-public", false, "allow dashboard, setup guide, and downloads without login; inference remains authenticated")
 	downloadsDir := flags.String("downloads-dir", "", "directory of manually provisioned CHAIR release archives and SHA256SUMS")
 	allowTokenReveal := flags.Bool("allow-client-token-reveal", false, "allow dashboard-authenticated users to explicitly reveal the inference client token")
+	enrollmentPath := flags.String("enrollment-token-file", "", "enable /join using a separate shared enrollment token; persist generated worker tokens in --workers-file")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -88,10 +89,13 @@ func runHub(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot open worker credentials file")
 	}
-	defer workers.Close()
 	workerTokens, err := readWorkerTokens(workers, clientToken)
+	closeErr := workers.Close()
 	if err != nil {
 		return err
+	}
+	if closeErr != nil {
+		return fmt.Errorf("cannot close worker credentials file")
 	}
 	h := newHub(clientToken, workerTokens, *maxConcurrentRequests)
 	h.logger = logger
@@ -116,6 +120,17 @@ func runHub(ctx context.Context, args []string) error {
 	}
 	if h.allowClientTokenReveal {
 		logger.Warn("client-token reveal enabled; dashboard credentials grant inference access")
+	}
+	if *enrollmentPath != "" {
+		token, err := tokenFile(*enrollmentPath)
+		if err != nil {
+			return fmt.Errorf("enrollment token: %w", err)
+		}
+		if err := h.enableEnrollment(token, *workersPath); err != nil {
+			return err
+		}
+		defer h.enrollment.root.Close()
+		logger.Warn("worker enrollment enabled; enrollment credential holders can receive inference requests", "path", "/join")
 	}
 	defer h.Close()
 	server := &http.Server{

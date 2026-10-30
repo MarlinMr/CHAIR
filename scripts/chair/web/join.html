@@ -1,0 +1,38 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CHAIR · Join cluster</title>
+    <link rel="stylesheet" href="/dashboard/style.css">
+    <script src="/dashboard/enrollment.js" defer></script>
+</head>
+<body>
+    <header class="appbar"><span class="brand">CHAIR</span><span>Central Hub for AI Routing</span><span class="readonly">Worker enrollment</span></header>
+    <main>
+        <div class="page-header"><div><p class="eyebrow">Worker enrollment</p><h1>Join the cluster.</h1><p>Use the shared enrollment token supplied by your hub operator.</p></div></div>
+        <p class="refresh">Only enroll machines you control and trust to receive inference prompts. Registration is immediate, but the worker must still be started on your machine.</p>
+        <form id="enrollment-form" class="enrollment-form" method="post" action="/join" autocomplete="off">
+            <div class="form-field"><label for="worker-id">Worker ID</label><input id="worker-id" required minlength="1" maxlength="64" pattern="[A-Za-z0-9._\-]{1,64}" aria-describedby="worker-id-help"><p id="worker-id-help" class="muted">A unique name: 1–64 ASCII letters, digits, dots, underscores, or hyphens. Existing IDs cannot be replaced.</p></div>
+            <div class="form-field"><label for="enrollment-token">Shared enrollment token</label><input id="enrollment-token" type="password" required minlength="32" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="enrollment-token-help"><p id="enrollment-token-help" class="muted">This grants permission to add a worker. It is not your worker token or the inference API token.</p></div>
+            <button id="enroll-worker" class="button" type="submit">Register worker</button>
+        </form>
+        <noscript><p>JavaScript is required. No registration is submitted without it.</p></noscript>
+        <p id="enrollment-status" class="refresh" role="status">A new worker token will be shown only in this enrollment response. Save it before leaving the page.</p>
+        <section id="enrollment-result" hidden aria-labelledby="enrollment-result-heading">
+            <h2 id="enrollment-result-heading">Worker registered</h2>
+            <p>Save this token in an owner-only file on your worker. It cannot be retrieved again from this page.</p>
+            <p><code id="enrolled-worker-token" class="secret-value"></code></p>
+            <div class="actions"><button id="copy-worker-token" class="button" type="button">Copy worker token</button><button id="hide-worker-token" class="button" type="button">Hide worker token</button></div>
+            <h2>Start your worker</h2>
+            <p>Save the token with the filename shown below. Start Ollama separately with the desired models, then run:</p>
+            <pre class="command"><code id="worker-start-command"></code></pre>
+            <p class="muted">For a private/self-signed hub certificate, ask the operator for the public certificate and add <code>--ca-file hub.crt</code>. Never disable TLS verification or share the enrollment token with your engine.</p>
+        </section>
+    </main>
+</body>
+</html>
