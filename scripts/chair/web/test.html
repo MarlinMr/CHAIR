@@ -1,0 +1,34 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CHAIR · Test inference</title>
+    <link rel="stylesheet" href="/dashboard/style.css">
+    <script src="/dashboard/test.js" defer></script>
+</head>
+<body>
+    <header class="appbar"><a href="/" class="brand">CHAIR</a><span>Central Hub for AI Routing</span><span class="readonly">Authenticated test</span></header>
+    <main class="test-page">
+        <div class="page-header"><div><p class="eyebrow">Test inference</p><h1>Try a small prompt.</h1><p>Uses the same model-aware routing and global concurrency limit as API clients.</p></div><a class="button" href="/">Back to dashboard</a></div>
+        <section class="test-panel" aria-label="Inference test">
+            <p class="muted">Single-turn Chat Completions · up to 4096 prompt characters · 256 output tokens · 60-second limit. Engine support is required. No tools or conversation history.</p>
+            <form id="test-form">
+                <div class="form-field"><label for="test-model">Model</label><select id="test-model" required disabled><option value="">Loading models…</option></select></div>
+                <button class="button" id="test-model-refresh" type="button">Refresh models</button>
+                <div class="form-field"><label for="test-prompt">Prompt</label><textarea id="test-prompt" rows="4" maxlength="4096" required autocomplete="off" spellcheck="false" placeholder="Write a short test prompt"></textarea></div>
+                <div class="actions"><button class="button" id="test-send" type="submit" disabled>Send prompt</button><button class="button" id="test-cancel" type="button" disabled>Cancel</button><button class="button" id="test-clear" type="button">Clear</button></div>
+            </form>
+            <p id="test-status" role="status">Loading available models…</p>
+            <h2 id="test-response-heading">Response</h2>
+            <pre id="test-output" class="test-output" aria-labelledby="test-response-heading" tabindex="0"></pre>
+            <p class="muted">Prompts are sent to the selected engine. CHAIR does not log or save their contents. Text stays in this tab until cleared or you leave; engine retention policies still apply. Do not enter secrets.</p>
+            <noscript><p>JavaScript is required for this test. Use the terminal examples in the <a href="/dashboard/readme.html">setup guide</a> instead.</p></noscript>
+        </section>
+    </main>
+</body>
+</html>

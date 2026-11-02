@@ -346,6 +346,16 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 	r.GetBody = nil
 	// This hostname is logical. The transport opens a stream in this worker's
 	// outbound connection, never a connection to an advertised worker address.
-	inferenceProxy(&url.URL{Scheme: "http", Host: "worker"}, worker.transport, logger).ServeHTTP(logged, r)
+	proxy := inferenceProxy(&url.URL{Scheme: "http", Host: "worker"}, worker.transport, logger)
+	if r.Context().Value(inferenceTestContextKey{}) == true {
+		// Browser tests must not accept upstream cookies, redirects, CORS policy,
+		// or arbitrary headers/trailers from the worker's local engine.
+		proxy.ModifyResponse = func(response *http.Response) error {
+			response.Header = http.Header{"Content-Type": response.Header.Values("Content-Type")}
+			response.Trailer = nil
+			return nil
+		}
+	}
+	proxy.ServeHTTP(logged, r)
 	finished = true
 }

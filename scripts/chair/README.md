@@ -49,6 +49,8 @@ stream and cancels the local engine request without closing other streams.
   Responses support are explicit, never auto-detected.
 - Optional read-only HTTPS dashboard showing worker connections, fresh model
   inventories, and active hub-routed jobs, protected by a separate credential.
+- Optional authenticated browser test page (`--allow-inference-test`) for bounded
+  single-turn prompts, streamed text, and cancellation without revealing tokens.
 - End-to-end TLS to the hub, with system trust or an additional CA file.
 - Operator-provisioned identities and a distinct bearer token for each worker,
   separate from the client token. One live connection per authorized identity;
@@ -342,14 +344,58 @@ GPU workers, not users sharing the client token.
 
 `GET /dashboard/status` provides the same read-only snapshot as JSON. By default,
 HTML, CSS, JavaScript, JSON, downloads, and the local setup guide all require the
-dashboard credential. The credential cannot directly run inference, administer
-engines, or modify cluster membership. Enabling token reveal below explicitly
-allows its holders to obtain inference access. A small embedded same-origin script performs status updates;
+dashboard credential. By default, the credential cannot run inference, administer
+engines, or modify cluster membership. Enabling the inference test below grants
+bounded test inference access; enabling token reveal explicitly allows its holders
+to obtain the full client credential. A small embedded same-origin script performs status updates;
 there are no external assets, frontend build step, or cookie sessions.
 Browsers may retain Basic credentials until the browser session is closed; use
 a private browser session on shared machines. Token changes require a hub
 restart. Keep this experimental dashboard on trusted networks; worker/model
 names are operational metadata and should not be exposed publicly.
+
+#### Send a small test prompt from the browser
+
+To grant dashboard-authenticated users bounded test inference, append this flag
+to the hub command (requires `--dashboard-token-file`):
+
+```text
+--allow-inference-test
+```
+
+The **Test inference** link appears beside **Refresh overview** and **Pause live
+refresh**. It opens `/dashboard/test`, with a model selector, a small prompt box,
+streamed plain-text output, **Cancel**, **Clear**, and **Refresh models**. Log in
+with username `chair` and the dashboard token. Even on a public dashboard, the
+test page, script, model list, and send action require this login. The link may
+be visible publicly, but anonymous visitors cannot run tests. This option is
+disabled by default and independent of client-token reveal.
+
+The server constructs a **single-turn Chat Completions** request with one user
+message, streaming enabled, and `max_tokens: 256`. Requests accept only `model`
+and `prompt`, with a 4096-character prompt limit, 16 KiB total JSON limit, and
+five-second body-read deadline. Upstream work has a 60-second deadline; downstream
+writes are bounded to 65 seconds. The UI limits displayed output to 65,536 text
+characters. No conversation history, tools, arbitrary routes, token overrides, or
+Responses API test mode are provided. Engine/model support for Chat Completions,
+streaming, and `max_tokens` is required; this is not a full chat client. The
+engine remains responsible for honoring generation limits and cancellation.
+
+The test uses normal fresh-model routing, reservations, active-job tracking, and
+the **same global concurrency limit** as API requests. There is no test bypass
+or automatic retry. Canceling or leaving the page cancels the HTTP request and
+propagates cancellation to the selected engine. Partial output may remain until
+cleared. Failed/unfinished streams are reported, not silently retried.
+
+Browser submissions use a dedicated authenticated same-origin POST with an
+explicit action header. The hub never puts the client token in HTML/JavaScript
+or sends dashboard credentials/cookies to an engine. Engine cookies, redirects,
+and arbitrary response headers/trailers are stripped on this browser-only path.
+API endpoints still reject browser-origin requests; no CORS access is enabled.
+Only enable this option for trusted dashboard users: it lets them spend inference
+capacity, with no per-user quotas. CHAIR does not persist or log prompts/output,
+but they exist in the tab and are sent to the engine, whose retention policy
+still applies. Use **Clear** on shared machines; do not enter secrets.
 
 #### Host downloads and the README on the hub
 
@@ -714,9 +760,10 @@ curl --no-buffer --cacert private-ca.crt \
 
 The command shows the header syntax, but shell-expanded tokens can be visible in
 process arguments. For sensitive environments, configure the client to read its
-authorization header from a protected file instead. Browser clients are not
-supported for inference; the hub rejects inference requests with an `Origin`
-header. The separately authenticated dashboard supports same-origin browsers.
+authorization header from a protected file instead. General browser clients are
+not supported on the inference API; the hub rejects API requests with an `Origin`
+header. The optional authenticated dashboard test uses a separate, bounded
+same-origin action instead of exposing API/client credentials to the browser.
 
 ## OpenAI-compatible clients and OpenCode
 

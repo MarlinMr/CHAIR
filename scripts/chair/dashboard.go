@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js web/readme.html README.md
+//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js web/readme.html web/test.html web/test.js README.md
 var dashboardAssets embed.FS
 
 var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "web/dashboard.html"))
@@ -65,6 +65,7 @@ type dashboardView struct {
 	Downloads         []dashboardDownload `json:"-"`
 	DownloadsEnabled  bool                `json:"-"`
 	EnrollmentEnabled bool                `json:"-"`
+	TestEnabled       bool                `json:"-"`
 }
 
 func (h *hub) enableDashboard(token string) error {
@@ -116,6 +117,12 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	join := r.URL.Path == "/join"
+	test := r.URL.Path == "/dashboard/test" || r.URL.Path == "/dashboard/test.js" || strings.HasPrefix(r.URL.Path, "/dashboard/test/")
+	if test && !h.allowInferenceTest {
+		http.NotFound(w, r)
+		return
+	}
+	testRun := r.URL.Path == "/dashboard/test/run"
 	if (join || r.URL.Path == "/dashboard/enrollment.js") && h.enrollment == nil {
 		http.NotFound(w, r)
 		return
@@ -132,7 +139,7 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	method := http.MethodGet
-	if reveal || (join && r.Method == http.MethodPost) {
+	if reveal || testRun || (join && r.Method == http.MethodPost) {
 		method = http.MethodPost
 	}
 	if r.Method != method {
@@ -144,8 +151,8 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	paused := (r.URL.Path == "/" || access) && r.URL.RawQuery == "refresh=off"
-	action := reveal || (join && r.Method == http.MethodPost)
-	publicNavigation := (h.dashboardPublic || join) && !action && !access && r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
+	action := reveal || testRun || (join && r.Method == http.MethodPost)
+	publicNavigation := (h.dashboardPublic || join) && !action && !access && !test && r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
 	crossSite := r.Header.Get("Sec-Fetch-Site") == "cross-site" && !publicNavigation
 	if (r.URL.RawQuery != "" && !paused) || (r.Header.Get("Origin") != "" && !sameDashboardOrigin(r.Header.Get("Origin"), r.Host)) || crossSite {
 		http.Error(w, "cross-origin requests and unsupported query strings are not accepted", http.StatusForbidden)
@@ -155,17 +162,22 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 	if join {
 		marker = "X-Chair-Enroll"
 	}
+	if testRun {
+		marker = "X-Chair-Test"
+	}
 	if action && (r.Header.Get("Origin") == "" || r.Header.Get(marker) != "1") {
 		http.Error(w, "explicit same-origin action required", http.StatusForbidden)
 		return
 	}
 	authenticated := h.dashboardAuthenticated(r)
-	if ((!h.dashboardPublic && !join && !joinAsset) || reveal || access) && !authenticated {
+	if ((!h.dashboardPublic && !join && !joinAsset) || reveal || access || test) && !authenticated {
 		w.Header().Set("WWW-Authenticate", `Basic realm="CHAIR dashboard", charset="UTF-8"`)
 		http.Error(w, "dashboard authentication required", http.StatusUnauthorized)
 		return
 	}
 	switch r.URL.Path {
+	case "/dashboard/test", "/dashboard/test.js", "/dashboard/test/models", "/dashboard/test/run":
+		h.serveInferenceTest(w, r)
 	case "/join":
 		if r.Method == http.MethodPost {
 			h.serveEnrollment(w, r)
@@ -223,6 +235,7 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		view.Downloads = h.dashboardDownloads()
 		view.DownloadsEnabled = h.downloadsRoot != nil
 		view.EnrollmentEnabled = h.enrollment != nil
+		view.TestEnabled = h.allowInferenceTest
 		if err := dashboardTemplate.Execute(&page, view); err != nil {
 			http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
 			return

@@ -35,6 +35,18 @@ test.beforeAll(async () => {
     await writeFile(join(directory, 'downloads', 'chair-linux-amd64.tar.gz'), 'browser-test archive', { mode: 0o600 });
     await writeFile(join(directory, 'downloads', 'SHA256SUMS'), 'browser-test checksums', { mode: 0o600 });
     engine = createServer((req, res) => {
+        if (req.url === '/v1/chat/completions') {
+            let body = '';
+            req.on('data', chunk => { body += chunk; });
+            req.on('end', () => {
+                const input = JSON.parse(body);
+                res.setHeader('Content-Type', 'text/event-stream');
+                res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'First chunk <script>not executable</script>' } }] })}\n\n`);
+                const timer = setTimeout(() => res.end('data: {"choices":[{"delta":{"content":" final chunk"}}]}\n\ndata: [DONE]\n\n'), input.messages[0].content === 'browser-cancel-test' ? 30000 : 1000);
+                res.on('close', () => clearTimeout(timer));
+            });
+            return;
+        }
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(req.url === '/api/tags' ? { models: [{ name: 'test-model:latest' }] } : {}));
     });
@@ -44,7 +56,7 @@ test.beforeAll(async () => {
     await new Promise(done => reservation.close(done));
     url = `https://127.0.0.1:${port}`;
     const launch = args => spawn(resolve(binary), args, { cwd: directory, stdio: 'ignore' });
-    hubProcess = launch(['hub', '--listen', `127.0.0.1:${port}`, '--tls-cert', 'hub.crt', '--tls-key', 'hub.key', '--client-token-file', 'client.token', '--workers-file', 'workers.json', '--dashboard-token-file', 'dashboard.token', '--dashboard-public', '--allow-client-token-reveal', '--downloads-dir', 'downloads', '--enrollment-token-file', 'enrollment.token']);
+    hubProcess = launch(['hub', '--listen', `127.0.0.1:${port}`, '--tls-cert', 'hub.crt', '--tls-key', 'hub.key', '--client-token-file', 'client.token', '--workers-file', 'workers.json', '--dashboard-token-file', 'dashboard.token', '--dashboard-public', '--allow-client-token-reveal', '--allow-inference-test', '--downloads-dir', 'downloads', '--enrollment-token-file', 'enrollment.token']);
     api = await request.newContext({ ignoreHTTPSErrors: true, httpCredentials: { username: 'chair', password } });
     await expect.poll(async () => {
         try { return (await api.get(url)).status(); } catch { return 0; }
@@ -64,6 +76,77 @@ test.afterAll(async () => {
     if (api) await api.dispose();
     if (engine) await new Promise(done => engine.close(done));
     if (directory) await rm(directory, { recursive: true, force: true });
+});
+
+test('inference test streams safe text and clears without exposing credentials', async ({ page }) => {
+    await page.goto(url);
+    await page.getByRole('link', { name: 'Test inference', exact: true }).click();
+    await expect(page).toHaveURL(`${url}/dashboard/test`);
+    await expect(page.getByLabel('Model', { exact: true })).toBeEnabled();
+    await page.getByLabel('Prompt', { exact: true }).fill('browser-completion-test');
+    const requestPromise = page.waitForRequest(req => req.url().endsWith('/dashboard/test/run'));
+    await page.getByRole('button', { name: 'Send prompt', exact: true }).click();
+    const sent = await requestPromise;
+    expect(sent.postDataJSON()).toEqual({ model: 'test-model:latest', prompt: 'browser-completion-test' });
+    await expect(page.locator('#test-output')).toContainText('First chunk');
+    await expect(page.getByRole('status')).toHaveText('Generating…');
+    await expect(page.getByRole('button', { name: 'Send prompt' })).toBeDisabled();
+    await expect(page.getByRole('status')).toHaveText('Completed.');
+    await expect(page.locator('#test-output')).toContainText('final chunk');
+    await expect(page.locator('#test-output script')).toHaveCount(0);
+    for (const token of [clientToken, workerToken, password, enrollmentToken]) expect(await page.content()).not.toContain(token);
+    await page.screenshot({ path: test.info().outputPath('test-inference-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath('test-inference-mobile.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    await expect(page.locator('#test-output')).toBeEmpty();
+    await expect(page.getByLabel('Prompt', { exact: true })).toHaveValue('');
+});
+
+test('canceling a browser inference test releases its active job', async ({ page }) => {
+    await page.goto(`${url}/dashboard/test`);
+    await expect(page.getByLabel('Model', { exact: true })).toBeEnabled();
+    await page.getByLabel('Prompt', { exact: true }).fill('browser-cancel-test');
+    await page.getByRole('button', { name: 'Send prompt', exact: true }).click();
+    await expect(page.locator('#test-output')).toContainText('First chunk');
+    expect((await (await api.get(`${url}/dashboard/status`)).json()).jobs).toHaveLength(1);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Canceled.');
+    await expect.poll(async () => (await (await api.get(`${url}/dashboard/status`)).json()).jobs.length).toBe(0);
+    await expect(page.getByRole('button', { name: 'Send prompt' })).toBeEnabled();
+});
+
+test('inference test handles empty models and HTTP failures without retrying', async ({ page }) => {
+    await page.route('**/dashboard/test/models', route => route.fulfill({ json: { data: [] } }));
+    await page.goto(`${url}/dashboard/test`);
+    await expect(page.getByRole('status')).toContainText('No models are available.');
+    await expect(page.getByRole('button', { name: 'Send prompt' })).toBeDisabled();
+    await page.route('**/dashboard/test/models', route => route.fulfill({ json: { data: [{ id: 'test-model:latest' }] } }));
+    await page.getByRole('button', { name: 'Refresh models' }).click();
+    await expect(page.getByLabel('Model', { exact: true })).toBeEnabled();
+    let submissions = 0;
+    await page.route('**/dashboard/test/run', route => {
+        submissions++;
+        return route.fulfill({ status: 503, body: 'private engine diagnostic' });
+    });
+    await page.getByLabel('Prompt', { exact: true }).fill('test failing request');
+    await page.getByRole('button', { name: 'Send prompt', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Test failed (HTTP 503)');
+    await expect(page.getByRole('button', { name: 'Send prompt' })).toBeEnabled();
+    expect(await page.content()).not.toContain('private engine diagnostic');
+    expect(submissions).toBe(1);
+});
+
+test('public dashboard does not grant anonymous inference-test access', async ({ browser }) => {
+    const anonymous = await browser.newContext({ ignoreHTTPSErrors: true, httpCredentials: undefined });
+    try {
+        const page = await anonymous.newPage();
+        await page.goto(url);
+        await expect(page.getByRole('link', { name: 'Test inference', exact: true })).toBeVisible();
+        expect((await anonymous.request.get(`${url}/dashboard/test`)).status()).toBe(401);
+        expect((await anonymous.request.post(`${url}/dashboard/test/run`, { headers: { Origin: url, 'X-Chair-Test': '1' }, data: { model: 'test-model:latest', prompt: 'must not run' } })).status()).toBe(401);
+    } finally { await anonymous.close(); }
 });
 
 test('live updates preserve expanded models, host details, and keyboard focus', async ({ page }) => {

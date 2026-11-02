@@ -56,6 +56,7 @@ type hub struct {
 	dashboardToken         string
 	dashboardPublic        bool
 	allowClientTokenReveal bool
+	allowInferenceTest     bool
 	downloadsRoot          *os.Root
 	enrollment             *workerEnrollment
 }
@@ -107,6 +108,12 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveModels(w, r)
 		return
 	}
+	h.serveInference(w, r)
+}
+
+// Shared admission and routing for authenticated API clients and the explicitly
+// enabled, separately authenticated dashboard test action.
+func (h *hub) serveInference(w http.ResponseWriter, r *http.Request) {
 	select {
 	case h.requests <- struct{}{}:
 		defer func() { <-h.requests }()

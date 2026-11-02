@@ -10,7 +10,7 @@ import (
 )
 
 // Update when preparing the next CHAIR release. All build paths use this value.
-const version = "v0.1.5"
+const version = "v0.1.6"
 
 func commandFlags(command string) *flag.FlagSet {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)

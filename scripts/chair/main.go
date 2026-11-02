@@ -69,6 +69,7 @@ func runHub(ctx context.Context, args []string) error {
 	dashboardPublic := flags.Bool("dashboard-public", false, "allow dashboard, setup guide, and downloads without login; inference remains authenticated")
 	downloadsDir := flags.String("downloads-dir", "", "directory of manually provisioned CHAIR release archives and SHA256SUMS")
 	allowTokenReveal := flags.Bool("allow-client-token-reveal", false, "allow dashboard-authenticated users to explicitly reveal the inference client token")
+	allowTest := flags.Bool("allow-inference-test", false, "allow dashboard-authenticated users to send bounded test prompts")
 	enrollmentPath := flags.String("enrollment-token-file", "", "enable /join using a separate shared enrollment token; persist generated worker tokens in --workers-file")
 	if err := parseCommandFlags(flags, args); err != nil {
 		return err
@@ -114,6 +115,12 @@ func runHub(ctx context.Context, args []string) error {
 	}
 	if err := h.configureDashboard(*dashboardPublic, *allowTokenReveal, *downloadsDir); err != nil {
 		return err
+	}
+	if err := h.configureInferenceTest(*allowTest); err != nil {
+		return err
+	}
+	if h.allowInferenceTest {
+		logger.Warn("inference test enabled; dashboard credentials grant test inference access")
 	}
 	if h.downloadsRoot != nil {
 		defer h.downloadsRoot.Close()
