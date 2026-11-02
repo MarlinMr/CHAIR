@@ -132,6 +132,21 @@ On Windows, build with `go build -o chair.exe .`. Use `./chair` (or
 or your local build directory. CHAIR currently uses server-verified TLS plus
 per-worker bearer credentials, not PAIR's PIN pairing or peer certificate mesh.
 
+Check the executable version or display usage without starting a service:
+
+```bash
+./chair --version
+./chair --help
+./chair hub --help
+./chair worker --help
+```
+
+The version is the first line of each help message. `hub --version` and
+`worker --version` also work without credentials. Help/version commands exit
+successfully; version output goes to stdout and help goes to stderr. The version
+constant in `cli.go` is shared by source builds and release archives and must be
+updated when preparing a CHAIR release.
+
 ### Generate a TLS certificate for testing
 
 For a controlled test, generate a self-signed certificate on the hub using
@@ -268,6 +283,25 @@ the single shared listener: update workers' `--hub` and inference-client base
 URLs when changing its port. TLS must terminate at CHAIR; plain HTTP behind a
 TLS-terminating reverse proxy is not accepted.
 
+On Linux, if port 443 fails with **permission denied**, you can grant a trusted
+executable only low-port binding permission (instead of running the hub as root):
+
+```bash
+sudo setcap 'cap_net_bind_service=+ep' ./chair
+```
+
+Replacing the executable typically removes that capability; repeat after an
+upgrade if needed. OS/container policy may still restrict binding. To check
+whether another listener already owns 443:
+
+```bash
+sudo ss -ltnp 'sport = :443'
+```
+
+An **address already in use** startup error means another listener must be
+stopped or a different port chosen. CHAIR does not change privileges or firewall
+rules automatically. Keep `8443` when low-port binding is not appropriate.
+
 The page shows every authorized worker, including disconnected machines, fresh
 model inventories, and active requests with their worker, model, API route,
 start time, and elapsed duration. It updates data in place every three seconds,
@@ -319,10 +353,21 @@ names are operational metadata and should not be exposed publicly.
 
 #### Host downloads and the README on the hub
 
-The **Setup guide** link opens this executable's bundled README at
-`/dashboard/readme` as plain text. No GitHub connection or separate documentation
-server is needed. The bundled guide matches the hub build; archives you supply
-may be from a different build.
+The **Setup guide** link opens this executable's bundled README as a formatted
+HTML page at `/dashboard/readme.html`, with a contents navigation, headings,
+tables, and scrollable code blocks. No external assets, GitHub connection, or
+separate documentation server are needed to read it. External reference links
+still require internet access. The bundled guide matches the hub build; archives
+you supply may be from a different build.
+
+Hub URL examples use the HTTPS address in your browser, preserving its port
+(including IPv6 brackets). Forwarded headers are ignored. Verify that this
+address is reachable from workers/clients and matches the hub's certificate.
+Model IDs, file paths, credential placeholders, certificate subject names, and
+worker-local engine URLs remain examples; no real tokens are inserted. The guide
+inherits the dashboard's public/private access policy and requires TLS. The
+embedded Markdown remains the single source of documentation; source/release
+README files keep generic example addresses.
 
 To offer binary downloads, create a dedicated directory and copy the release
 archives and their matching `SHA256SUMS` into it yourself. For example:

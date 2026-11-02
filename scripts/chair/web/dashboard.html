@@ -38,7 +38,7 @@ SPDX-License-Identifier: Apache-2.0
         </section>
         <section aria-labelledby="downloads-heading">
             <div class="section-heading"><h2 id="downloads-heading">Downloads &amp; setup</h2><p>Hosted on this hub. Check archives against SHA256SUMS before use; binaries are unsigned.</p></div>
-            <div class="resource-links"><a class="resource-link" href="/dashboard/readme">Setup guide <small>Bundled CHAIR README</small></a>{{range .Downloads}}<a class="resource-link" href="/dashboard/downloads/{{.Name}}">{{.Label}} <small>{{.Name}}</small></a>{{end}}</div>
+            <div class="resource-links"><a class="resource-link" href="/dashboard/readme.html">Setup guide <small>Formatted guide with this hub's address</small></a>{{range .Downloads}}<a class="resource-link" href="/dashboard/downloads/{{.Name}}">{{.Label}} <small>{{.Name}}</small></a>{{end}}</div>
             {{if not .Downloads}}<p class="muted">{{if .DownloadsEnabled}}No release archives are available yet.{{else}}Binary downloads are not configured on this hub.{{end}}</p>{{end}}
         </section>
         {{if .EnrollmentEnabled}}<section aria-labelledby="join-heading"><div class="section-heading"><h2 id="join-heading">Join the cluster</h2><p>Register a new worker using the shared enrollment token supplied by the operator.</p></div><a class="button" href="/join">Join cluster</a></section>{{end}}

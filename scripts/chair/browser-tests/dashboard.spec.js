@@ -158,11 +158,39 @@ test('anonymous visitors can view setup and downloads but cannot reveal tokens',
         expect(await readFile(saved, 'utf8')).toBe('browser-test archive');
 
         await page.getByRole('link', { name: /Setup guide/ }).click();
-        await expect(page).toHaveURL(`${url}/dashboard/readme`);
+        await expect(page).toHaveURL(`${url}/dashboard/readme.html`);
         await expect(page.locator('body')).toContainText('Generate a TLS certificate for testing');
     } finally {
         await anonymous.close();
     }
+});
+
+test('setup guide formats bundled Markdown with current-hub examples and local navigation', async ({ page }) => {
+    const externalRequests = [];
+    page.on('request', req => { if (!req.url().startsWith(url)) externalRequests.push(req.url()); });
+    await page.goto(`${url}/dashboard/readme.html`);
+
+    await expect(page.getByRole('heading', { name: 'Connect your engines and clients.' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Guide contents' })).toBeVisible();
+    await expect(page.locator('.page-header')).toContainText(url);
+    await expect(page.locator('.guide-content pre').filter({ hasText: `--hub ${url}` }).first()).toBeAttached();
+    await expect(page.locator('.guide-content pre').filter({ hasText: `${url}/v1/chat/completions` })).toHaveCount(1);
+    await expect(page.locator('.guide-content pre').filter({ hasText: 'http://127.0.0.1:11434' }).first()).toBeAttached();
+    expect(await page.locator('.guide-content').innerText()).not.toContain('https://hub.example.internal');
+    for (const token of [clientToken, workerToken, password, enrollmentToken]) expect(await page.content()).not.toContain(token);
+    const links = page.locator('.guide-toc a');
+    for (const link of await links.all()) {
+        const target = await link.getAttribute('href');
+        expect(await page.locator(target).count()).toBe(1);
+    }
+    await page.screenshot({ path: test.info().outputPath('guide-desktop.png') });
+    await page.getByRole('navigation', { name: 'Guide contents' }).getByRole('link', { name: 'Run', exact: true }).click();
+    await expect(page).toHaveURL(`${url}/dashboard/readme.html#run`);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.goto(`${url}/dashboard/readme.html`);
+    await page.screenshot({ path: test.info().outputPath('guide-mobile.png') });
+    expect(externalRequests).toEqual([]);
 });
 
 test('authenticated users explicitly reveal, copy, and hide the client token', async ({ page }) => {

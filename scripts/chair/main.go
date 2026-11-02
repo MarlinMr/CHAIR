@@ -24,7 +24,7 @@ import (
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := run(ctx, os.Args[1:]); err != nil {
+	if err := run(ctx, os.Args[1:]); err != nil && !errors.Is(err, flag.ErrHelp) {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}
@@ -40,21 +40,24 @@ func tokenFile(path string) (string, error) {
 }
 
 func run(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: chair hub|worker [flags]")
+	if len(args) > 0 {
+		switch args[0] {
+		case "hub":
+			return runHub(ctx, args[1:])
+		case "worker":
+			return runWorker(ctx, args[1:])
+		}
 	}
-	switch args[0] {
-	case "hub":
-		return runHub(ctx, args[1:])
-	case "worker":
-		return runWorker(ctx, args[1:])
-	default:
-		return fmt.Errorf("expected hub or worker")
+	flags := commandFlags("")
+	if err := parseCommandFlags(flags, args); err != nil {
+		return err
 	}
+	flags.Usage()
+	return fmt.Errorf("expected hub or worker")
 }
 
 func runHub(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("hub", flag.ContinueOnError)
+	flags := commandFlags("hub")
 	listen := flags.String("listen", "127.0.0.1:8443", "TLS listen address; explicitly choose an interface for remote access")
 	cert := flags.String("tls-cert", "", "hub TLS certificate file")
 	key := flags.String("tls-key", "", "hub TLS private key file")
@@ -67,7 +70,7 @@ func runHub(ctx context.Context, args []string) error {
 	downloadsDir := flags.String("downloads-dir", "", "directory of manually provisioned CHAIR release archives and SHA256SUMS")
 	allowTokenReveal := flags.Bool("allow-client-token-reveal", false, "allow dashboard-authenticated users to explicitly reveal the inference client token")
 	enrollmentPath := flags.String("enrollment-token-file", "", "enable /join using a separate shared enrollment token; persist generated worker tokens in --workers-file")
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return err
 	}
 	logger, err := commandLogger(*logLevel, os.Stderr)
@@ -146,13 +149,28 @@ func runHub(ctx context.Context, args []string) error {
 	defer stop()
 	logger.Info("starting experimental CHAIR TLS hub", "listen", *listen, "max_concurrent_requests", *maxConcurrentRequests, "authorized_workers", len(workerTokens))
 	if err := server.ListenAndServeTLS(*cert, *key); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("cannot serve hub; check listen address and TLS files")
+		return hubServeError(err)
 	}
 	return nil
 }
 
+func hubServeError(err error) error {
+	var operation *net.OpError
+	if errors.As(err, &operation) && operation.Op == "listen" {
+		switch {
+		case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+			return fmt.Errorf("cannot bind hub listen address: permission denied; ports below 1024 may require OS binding permission; use port 8443 or grant only low-port binding permission")
+		case errors.Is(err, syscall.EADDRINUSE):
+			return fmt.Errorf("cannot bind hub listen address: address already in use; stop the other listener or choose another port")
+		default:
+			return fmt.Errorf("cannot bind hub listen address; check that the address is valid and available on this machine")
+		}
+	}
+	return fmt.Errorf("cannot serve hub; check TLS certificate and key files and their permissions")
+}
+
 func runWorker(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("worker", flag.ContinueOnError)
+	flags := commandFlags("worker")
 	address := flags.String("hub", "", "hub HTTPS base URL")
 	tokenPath := flags.String("worker-token-file", "", "worker bearer token file")
 	id := flags.String("worker-id", "", "stable worker ID authorized in the hub's workers file")
@@ -162,7 +180,7 @@ func runWorker(ctx context.Context, args []string) error {
 	engineTokenPath := flags.String("engine-token-file", "", "optional local engine API key file; never sent to the hub")
 	ca := flags.String("ca-file", "", "additional trusted PEM CA certificates for the hub")
 	logLevel := flags.String("log-level", "info", "logging verbosity: debug, info, warn, or error")
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandFlags(flags, args); err != nil {
 		return err
 	}
 	logger, err := commandLogger(*logLevel, os.Stderr)

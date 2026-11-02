@@ -33,7 +33,7 @@ func TestPublicDashboard_AllowsReadOnlyResourcesWithoutCredentials(t *testing.T)
 	directory := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "chair-linux-amd64.tar.gz"), []byte("test archive"), 0600))
 	h := configuredDashboard(t, true, true, directory)
-	for _, path := range []string{"/", "/dashboard/status", "/dashboard/style.css", "/dashboard/dashboard.js", "/dashboard/readme", "/dashboard/downloads/chair-linux-amd64.tar.gz"} {
+	for _, path := range []string{"/", "/dashboard/status", "/dashboard/style.css", "/dashboard/dashboard.js", "/dashboard/readme.html", "/dashboard/downloads/chair-linux-amd64.tar.gz"} {
 		t.Run(path, func(t *testing.T) {
 			response := httptest.NewRecorder()
 
@@ -256,7 +256,7 @@ func TestDashboardDownloads_RequiresLoginUnlessPublicAccessIsEnabled(t *testing.
 	directory := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "chair-linux-amd64.tar.gz"), []byte("test archive"), 0600))
 	h := configuredDashboard(t, false, false, directory)
-	for _, path := range []string{"/dashboard/readme", "/dashboard/downloads/chair-linux-amd64.tar.gz"} {
+	for _, path := range []string{"/dashboard/readme.html", "/dashboard/downloads/chair-linux-amd64.tar.gz"} {
 		t.Run(path, func(t *testing.T) {
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://hub"+path, nil))

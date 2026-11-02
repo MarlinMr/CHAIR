@@ -15,6 +15,7 @@ The standalone `chair` binary links the following runtime dependencies:
 | --- | --- | --- | --- |
 | `github.com/coder/websocket` | v1.8.14 | MIT | https://github.com/coder/websocket/tree/v1.8.14 |
 | `github.com/hashicorp/yamux` | v0.1.2 | MPL-2.0 | https://github.com/hashicorp/yamux/tree/v0.1.2 |
+| `github.com/yuin/goldmark` | v1.8.7 | MIT | https://github.com/yuin/goldmark/tree/v1.8.7 |
 | Go runtime and standard library | Recorded in `BUILD_INFO.txt` | BSD-3-Clause | https://go.dev/dl/ |
 
 The CHAIR workflow includes each dependency's original, unmodified license text
@@ -22,6 +23,7 @@ in every archive:
 
 - `licenses/coder-websocket-LICENSE.txt`
 - `licenses/hashicorp-yamux-LICENSE.txt`
+- `licenses/yuin-goldmark-LICENSE.txt`
 - `licenses/go-LICENSE.txt`
 
 These components are not modified or vendored by CHAIR. Their source is available

@@ -6,6 +6,7 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/hashicorp/yamux v0.1.2
 	github.com/stretchr/testify v1.12.1
+	github.com/yuin/goldmark v1.8.7
 )
 
 require go.yaml.in/yaml/v3 v3.0.5 // indirect

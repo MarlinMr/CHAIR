@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js README.md
+//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js web/readme.html README.md
 var dashboardAssets embed.FS
 
 var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "web/dashboard.html"))
@@ -191,15 +191,8 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(struct {
 			ClientToken string `json:"client_token"`
 		}{ClientToken: h.clientToken})
-	case "/dashboard/readme":
-		guide, err := dashboardAssets.ReadFile("README.md")
-		if err != nil {
-			http.Error(w, "setup guide unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Disposition", `inline; filename="README.md"`)
-		_, _ = w.Write(guide)
+	case "/dashboard/readme.html":
+		h.serveGuide(w, r)
 	case "/dashboard/dashboard.js":
 		script, err := dashboardAssets.ReadFile("web/dashboard.js")
 		if err != nil {
