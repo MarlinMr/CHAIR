@@ -9,6 +9,8 @@ SPDX-License-Identifier: Apache-2.0
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CHAIR · Cluster overview</title>
     <link rel="stylesheet" href="/dashboard/style.css">
+    <link rel="stylesheet" href="/dashboard/ambient.css">
+    <script src="/dashboard/ambient.js" defer></script>
     <script src="/dashboard/dashboard.js" defer></script>
 </head>
 <body data-live="{{.Live}}" data-updated="{{.GeneratedAt.Format "15:04:05 UTC"}}">
@@ -51,5 +53,6 @@ SPDX-License-Identifier: Apache-2.0
         </section>{{end}}
         <footer>Jobs disappear when their requests finish, fail, or are canceled. Engine-local work and individual API-client identities are not tracked.</footer>
     </main>
+    {{template "ambient"}}
 </body>
 </html>

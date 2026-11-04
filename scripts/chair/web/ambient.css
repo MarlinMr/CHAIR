@@ -1,0 +1,61 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.ambient, .ambient-controls {
+    --creature-light: #8bb9b3;
+    --creature-shadow: #426e75;
+    --creature-outline: #35555e;
+    --creature-blush: #b693aa;
+    --creature-packet: #cbb985;
+}
+@media (prefers-color-scheme: dark) {
+    .ambient, .ambient-controls {
+        --creature-light: #749e9b;
+        --creature-shadow: #334b5a;
+        --creature-outline: #759994;
+        --creature-blush: #a283a1;
+        --creature-packet: #e4c98b;
+    }
+}
+.ambient { position: fixed; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; user-select: none; z-index: 1; }
+.ambient[hidden], .ambient-controls[hidden] { display: none; }
+.ambient-controls { position: fixed; left: 24px; top: 252px; width: 146px; z-index: 2; font-size: 12px; color: var(--color-text-secondary); }
+.ambient-controls label { display: block; margin-bottom: 6px; }
+.ambient-controls select { width: 100%; padding: 5px 8px; font: inherit; color: var(--color-text-primary); background: var(--background-color-surface-base); border: 1px solid var(--border-color-base); border-radius: 6px; }
+.ambient-controls select:focus-visible { outline: 3px solid var(--chair-accent); outline-offset: 3px; }
+.ambient-controls p { margin: 8px 0 0; }
+.ambient-controls .ambient-caption { font-size: 10px; opacity: .8; }
+.mantle-light { stop-color: var(--creature-light); }
+.mantle-shadow { stop-color: var(--creature-shadow); }
+.creature-body { fill: url(#ambient-mantle); stroke: var(--creature-outline); stroke-width: 1.6; }
+.creature-arm { fill: none; stroke: var(--creature-shadow); stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; }
+.arm-back { stroke-width: 9; opacity: .75; }
+.creature-highlight { fill: none; stroke: var(--creature-light); stroke-width: 4; stroke-linecap: round; opacity: .7; }
+.creature-sucker { fill: none; stroke: var(--creature-blush); stroke-width: 2.5; stroke-dasharray: 1 5; stroke-linecap: round; opacity: .7; }
+.creature-shadow { fill: var(--creature-shadow); opacity: .08; }
+.creature-eyes-asleep path, .creature-mouth { fill: none; stroke: var(--creature-outline); stroke-width: 2; stroke-linecap: round; }
+.creature-eyes-awake { display: none; }
+.creature-eye { fill: #d6d9b7; }
+.creature-pupil { fill: #29434d; }
+.creature-spark { fill: #f2ebcc; }
+.creature-cheek { fill: var(--creature-blush); opacity: .55; }
+.creature-freckle { fill: var(--creature-light); opacity: .7; }
+.creature-dream { fill: var(--creature-outline); opacity: .4; }
+.creature-dream path { fill: none; stroke: var(--creature-outline); stroke-width: 1.4; stroke-linejoin: round; }
+.creature-breath { animation: creature-breathe 8s ease-in-out infinite; }
+.ambient.is-awake .creature-eyes-asleep, .ambient.is-awake .creature-dream { display: none; }
+.ambient.is-awake .creature-eyes-awake { display: inline; }
+.ambient-branch { fill: none; stroke: var(--creature-shadow); stroke-width: 5; stroke-linecap: round; opacity: .24; }
+.ambient-branch-detail { fill: none; stroke: var(--creature-blush); stroke-width: 1.2; stroke-dasharray: 1 9; stroke-linecap: round; opacity: .25; }
+.ambient-computer { fill: var(--background-color-surface-base); stroke: var(--creature-outline); stroke-width: 1.5; opacity: .65; }
+.ambient-screen { fill: var(--creature-light); opacity: .22; }
+.ambient-worker-label { fill: var(--color-text-secondary); font: 11px system-ui, sans-serif; opacity: .75; }
+.ambient-connection.is-busy .ambient-screen { fill: var(--creature-packet); opacity: .6; }
+.ambient-connection.is-busy .ambient-branch { opacity: .38; }
+.ambient-packet { fill: var(--creature-packet); stroke: var(--background-color-surface-base); stroke-width: 1.5; filter: drop-shadow(0 0 3px var(--creature-packet)); display: none; }
+.ambient-connection.has-packet .ambient-packet { display: inline; }
+.ambient.is-still .creature-breath { animation: none; }
+.ambient.is-still .ambient-packet, .ambient.is-stale .ambient-packet, .ambient.is-paused .ambient-packet { display: none; }
+.ambient.is-paused .creature-breath, .ambient.is-stale .creature-breath { animation-play-state: paused; }
+@keyframes creature-breathe { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.8px); } }
+@media (prefers-reduced-motion: reduce) { .ambient .creature-breath { animation: none; } .ambient .ambient-packet { display: none; } }

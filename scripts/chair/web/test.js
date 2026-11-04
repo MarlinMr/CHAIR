@@ -61,6 +61,7 @@
         if (active || !form.reportValidity() || !prompt.value.trim()) return;
         const controller = new AbortController();
         active = controller;
+        document.dispatchEvent(new CustomEvent('chair:test-activity', { detail: { active: true } }));
         updateControls();
         output.textContent = '';
         status.textContent = 'Sending…';
@@ -113,6 +114,7 @@
             if (reader) { try { await reader.cancel(); } catch { /* Request may already be canceled. */ } }
             controller.abort();
             active = undefined;
+            document.dispatchEvent(new CustomEvent('chair:test-activity', { detail: { active: false } }));
             updateControls();
         }
     });

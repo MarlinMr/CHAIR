@@ -22,7 +22,7 @@ const testPromptLimit = 4096
 
 type inferenceTestContextKey struct{}
 
-var inferenceTestTemplate = template.Must(template.ParseFS(dashboardAssets, "web/test.html"))
+var inferenceTestTemplate = template.Must(template.ParseFS(dashboardAssets, "web/test.html", "web/ambient.html"))
 
 func (h *hub) configureInferenceTest(enabled bool) error {
 	if enabled && h.dashboardToken == "" {

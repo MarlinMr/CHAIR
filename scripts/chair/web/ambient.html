@@ -1,0 +1,37 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+{{define "ambient"}}
+<svg id="ambient-creature" class="ambient" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false" hidden>
+    <defs>
+        <clipPath id="ambient-margin-clip"><path id="ambient-margin-path" clip-rule="evenodd"/></clipPath>
+        <radialGradient id="ambient-mantle" cx="32%" cy="24%" r="85%"><stop offset="0" class="mantle-light"/><stop offset="1" class="mantle-shadow"/></radialGradient>
+    </defs>
+    <g clip-path="url(#ambient-margin-clip)">
+        <g id="ambient-connections"></g>
+        <g id="ambient-mascot">
+            <ellipse class="creature-shadow" cx="0" cy="70" rx="53" ry="7"/>
+            <g class="creature-breath">
+                <path class="creature-arm arm-back" d="M-25 22 C-65 30 -59 62 -38 65 C-21 68 -21 48 -36 51 M22 25 C60 26 65 62 43 65 C25 66 25 47 40 50"/>
+                <path class="creature-body" d="M-37 7 C-47-12 -36-43 -15-48 C-10-57 4-60 13-50 C39-49 48-23 38 7 L31 35 Q0 48 -31 34 Z"/>
+                <path class="creature-highlight" d="M-28-20 Q-23-35 -9-37"/>
+                <path class="creature-arm" d="M-26 24 C-39 45 -41 77 -19 77 C-2 77 -3 54 -16 58 M-9 30 C-20 55 -11 84 5 74 C15 67 0 57 1 44 M12 31 C13 63 40 77 44 56 C47 42 27 44 25 32"/>
+                <path class="creature-sucker" d="M-29 50 Q-34 64 -25 69 M13 53 Q23 68 32 62"/>
+                <g class="creature-eyes-asleep"><path d="M-25-2 Q-17 6 -9-2 M9-2 Q17 6 25-2"/></g>
+                <g class="creature-eyes-awake"><ellipse class="creature-eye" cx="-17" cy="-1" rx="8" ry="10"/><ellipse class="creature-eye" cx="17" cy="-1" rx="8" ry="10"/><ellipse class="creature-pupil" cx="-16" cy="0" rx="3" ry="6"/><ellipse class="creature-pupil" cx="16" cy="0" rx="3" ry="6"/><circle class="creature-spark" cx="-18" cy="-4" r="2"/><circle class="creature-spark" cx="14" cy="-4" r="2"/></g>
+                <ellipse class="creature-cheek" cx="-29" cy="12" rx="6" ry="3"/><ellipse class="creature-cheek" cx="29" cy="12" rx="6" ry="3"/>
+                <path class="creature-mouth" d="M-4 14 Q0 17 4 14"/>
+                <circle class="creature-freckle" cx="-21" cy="-27" r="2"/><circle class="creature-freckle" cx="-12" cy="-31" r="1.5"/><circle class="creature-freckle" cx="-5" cy="-27" r="1"/>
+            </g>
+            <g class="creature-dream"><circle cx="48" cy="-36" r="2"/><circle cx="55" cy="-47" r="3"/><path d="M57-65 h12 l-12 10 h12"/></g>
+        </g>
+    </g>
+</svg>
+<aside id="ambient-controls" class="ambient-controls" aria-label="Ambient creature preferences" hidden>
+    <label for="ambient-mode">Ambient creature</label>
+    <select id="ambient-mode"><option value="on">On</option><option value="still">Still</option><option value="off">Off</option></select>
+    <p id="ambient-state">Sleeping</p>
+    <p class="ambient-caption">Symbolic activity, not telemetry</p>
+</aside>
+{{end}}

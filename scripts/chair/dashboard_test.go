@@ -40,7 +40,7 @@ func dashboardData(t *testing.T, fixture transportFixture) dashboardView {
 
 func TestDashboard_DisabledUntilSeparateCredentialIsConfigured(t *testing.T) {
 	h := newHub(testClientToken, map[string]string{testWorkerID: testWorkerToken}, 1)
-	for _, path := range []string{"/", "/dashboard/status", "/dashboard/style.css", "/dashboard/dashboard.js"} {
+	for _, path := range []string{"/", "/dashboard/status", "/dashboard/style.css", "/dashboard/dashboard.js", "/dashboard/ambient.js", "/dashboard/ambient.css"} {
 		t.Run(path, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "https://hub"+path, nil)
 			request.SetBasicAuth("chair", testDashboardToken)

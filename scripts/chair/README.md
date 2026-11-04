@@ -309,6 +309,41 @@ model inventories, and active requests with their worker, model, API route,
 start time, and elapsed duration. It updates data in place every three seconds,
 without reloading the page or closing expanded model/hardware lists. **Pause live
 refresh** stops polling; **Refresh overview** fetches a snapshot even while paused.
+
+On wide screens, a small **ambient creature** sleeps beneath the upper-left
+CHAIR logo. Its tentacles unfurl into the unused top/side margins toward little
+computer endpoints for connected workers. New connections grow a branch;
+disconnected workers' branches retract. Reported in-flight requests wake the
+creature, and sparse lights travel from busy workers toward it. It settles back
+to sleep shortly after activity ends. These are **symbolic activity cues**, not
+network packets, token throughput, GPU utilisation, or proof of engine device use.
+Short API jobs can fall between status snapshots and may not be animated.
+
+The same decoration appears on the test-inference page, waking immediately when
+you send a prompt; worker-specific lights still use actual reported job metadata,
+not a guessed destination. There are at most eleven individual worker endpoints
+and one grouped endpoint, with at most four light packets visible at a time.
+Existing endpoints keep their positions as status updates arrive.
+
+The existing page layout and content widths are unchanged. The drawing is clipped
+to the gutters and cannot intercept clicks. It hides when either side has less
+than 224 pixels of spare room or the viewport is too short. **Ambient creature:
+On / Still / Off** is available beneath the creature when there is room; the
+preference is stored locally for this origin and shared across the overview/test
+pages. If browser storage is disabled, the choice applies only to the current
+page. **Still** retains static activity changes; **Off** hides the drawing.
+System reduced-motion preferences always suppress movement, even with On chosen.
+
+The overview reuses its existing status updates: the creature does not add a
+second poll, and **Pause live refresh** freezes its motion/data updates too.
+On the test page only, the visible/enabled creature reads `/dashboard/status`
+approximately every three seconds, with a prompt-time refresh for actual worker
+assignment. Hidden tabs pause motion/polling; narrow screens and Off disable the
+test-page decoration poll. Failed refreshes suppress activity cues and show
+**Status unavailable** until recovery. These features use local embedded SVG,
+CSS, and JavaScript, without external assets, inference requests, or new access
+permissions. No prompts, responses, credentials, or persistent job history feed
+the decoration.
 Failed updates leave the last snapshot visible with an update-failed message.
 Without JavaScript, the initial snapshot and manual page refresh remain available,
 but there is no automatic refresh.

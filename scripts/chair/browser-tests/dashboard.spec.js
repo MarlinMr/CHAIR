@@ -78,6 +78,174 @@ test.afterAll(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
 });
 
+test('left-margin creature preserves layout and shares its preference across pages', async ({ page }) => {
+    await page.setViewportSize({ width: 3440, height: 1440 });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.goto(`${url}/?refresh=off`);
+    const art = page.locator('#ambient-creature');
+    await expect(art).toBeVisible();
+    const original = await page.locator('main').boundingBox();
+    const mascot = await page.locator('#ambient-mascot').boundingBox();
+    const logo = await page.locator('.brand').boundingBox();
+    expect(mascot.x).toBeLessThan(original.x);
+    expect(mascot.y).toBeGreaterThan(logo.y + logo.height);
+    await expect(page.locator('[data-ambient-worker="gpu-test"]')).toHaveCount(1);
+    await page.getByLabel('Ambient creature', { exact: true }).selectOption('off');
+    await expect(art).toBeHidden();
+    expect(await page.locator('main').boundingBox()).toEqual(original);
+    await page.getByRole('link', { name: 'Test inference', exact: true }).click();
+    await expect(page.getByLabel('Ambient creature', { exact: true })).toHaveValue('off');
+    await expect(art).toBeHidden();
+    await page.getByLabel('Ambient creature', { exact: true }).selectOption('still');
+    await expect(art).toBeVisible();
+    await expect(art).toHaveClass(/is-still/);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(art).toBeHidden();
+    await expect(page.locator('#ambient-controls')).toBeHidden();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    let narrowPolls = 0;
+    await page.route('**/dashboard/status', async route => { narrowPolls++; await route.continue(); });
+    await page.clock.install();
+    await page.clock.fastForward(15000);
+    expect(narrowPolls).toBe(0);
+    expect(errors).toEqual([]);
+});
+
+test('creature preferences work even when browser storage is blocked', async ({ page }) => {
+    await page.addInitScript(() => Object.defineProperty(window, 'localStorage', { get() { throw new Error('storage blocked'); } }));
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    await page.goto(`${url}/?refresh=off`);
+    await expect(page.locator('#ambient-creature')).toBeVisible();
+    await page.getByLabel('Ambient creature', { exact: true }).selectOption('off');
+    await expect(page.locator('#ambient-creature')).toBeHidden();
+    await page.getByLabel('Ambient creature', { exact: true }).selectOption('still');
+    await expect(page.locator('#ambient-creature')).toBeVisible();
+    await expect(page.locator('#ambient-creature')).toHaveClass(/is-still/);
+});
+
+test('tentacles keep worker identities, wake for jobs, and retract on disconnect', async ({ page }) => {
+    await page.setViewportSize({ width: 3440, height: 1440 });
+    const view = await (await api.get(`${url}/dashboard/status`)).json();
+    const first = view.workers.find(worker => worker.id === 'gpu-test');
+    view.workers = [first, ...['gpu-fern', 'gpu-moss', 'gpu-north', 'gpu-night', 'gpu-reef'].map(id => ({ ...first, id, inflight: 0 }))];
+    let requests = 0;
+    await page.route('**/dashboard/status', route => { requests++; return route.fulfill({ json: view }); });
+    await page.goto(url);
+    await page.getByRole('link', { name: 'Refresh overview', exact: true }).click();
+    await expect(page.locator('[data-ambient-worker]')).toHaveCount(6);
+    expect(await page.locator('[data-ambient-worker="gpu-fern"] .ambient-branch').evaluate(node => node.getAnimations().some(animation => animation.effect.getTiming().duration === 2600))).toBe(true);
+    await page.locator('[data-ambient-worker="gpu-test"]').evaluate(node => { node.dataset.identity = 'original'; });
+    const path = await page.locator('[data-ambient-worker="gpu-test"] .ambient-branch').getAttribute('d');
+    first.inflight = 1;
+    view.workers[2].inflight = 1;
+    await page.getByRole('link', { name: 'Refresh overview', exact: true }).click();
+    await expect(page.locator('#ambient-creature')).toHaveClass(/is-awake/);
+    await expect(page.locator('[data-ambient-worker="gpu-test"]')).toHaveAttribute('data-identity', 'original');
+    expect(await page.locator('[data-ambient-worker="gpu-test"] .ambient-branch').getAttribute('d')).toBe(path);
+    await expect(page.locator('.has-packet')).toHaveCount(2);
+    await page.getByLabel('Ambient creature', { exact: true }).selectOption('still');
+    await page.screenshot({ path: test.info().outputPath('creature-ultrawide-light.png'), fullPage: true });
+    await page.screenshot({ path: test.info().outputPath('creature-closeup.png'), clip: { x: 0, y: 65, width: 240, height: 280 } });
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.screenshot({ path: test.info().outputPath('creature-ultrawide-dark.png'), fullPage: true });
+    await page.getByLabel('Ambient creature', { exact: true }).selectOption('on');
+    await page.clock.install();
+    first.inflight = 0;
+    view.workers[2].inflight = 0;
+    view.workers[1].status = 'Disconnected';
+    await page.getByRole('link', { name: 'Refresh overview', exact: true }).click();
+    await expect(page.locator('[data-ambient-worker]')).toHaveCount(5);
+    await page.clock.fastForward(2500);
+    await page.getByRole('link', { name: 'Refresh overview', exact: true }).click();
+    await expect(page.locator('#ambient-creature')).toHaveClass(/is-awake/);
+    await page.clock.fastForward(1800);
+    await expect(page.locator('#ambient-creature')).not.toHaveClass(/is-awake/);
+    await page.getByRole('link', { name: 'Pause live refresh', exact: true }).click();
+    const pausedRequests = requests;
+    await page.clock.fastForward(10000);
+    expect(requests).toBe(pausedRequests);
+    await expect(page.locator('#ambient-creature')).toHaveClass(/is-paused/);
+});
+
+test('ambient connections are bounded, labels are safe, and reduced motion is static', async ({ page }) => {
+    await page.setViewportSize({ width: 3440, height: 1440 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const view = await (await api.get(`${url}/dashboard/status`)).json();
+    const worker = view.workers[0];
+    view.workers = Array.from({ length: 80 }, (_, i) => ({ ...worker, id: `gpu-${i}`, status: 'Ready', inflight: 1 }));
+    view.workers[0].id = '<script>unsafe</script>';
+    await page.route('**/dashboard/status', route => route.fulfill({ json: view }));
+    await page.goto(url);
+    await page.getByRole('link', { name: 'Refresh overview', exact: true }).click();
+    await expect(page.locator('[data-ambient-worker]')).toHaveCount(12);
+    await expect(page.locator('.ambient-worker-label').last()).toHaveText('+ 69 workers');
+    await expect(page.locator('.ambient-worker-label').first()).toContainText('<script>');
+    await expect(page.locator('#ambient-connections script')).toHaveCount(0);
+    await expect(page.locator('#ambient-creature')).toHaveClass(/is-still/);
+    expect(await page.locator('#ambient-creature').evaluate(node => node.animationsPaused())).toBe(true);
+    expect(await page.locator('#ambient-creature').evaluate(node => node.getAnimations({ subtree: true }).filter(animation => animation.playState === 'running').length)).toBe(0);
+    expect(await page.locator('.has-packet').count()).toBeLessThanOrEqual(4);
+});
+
+test('test page wakes the creature immediately and stops ambient polling when off', async ({ page }) => {
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    await page.goto(`${url}/dashboard/test`);
+    await expect(page.locator('[data-ambient-worker="gpu-test"]')).toHaveCount(1);
+    await expect(page.getByLabel('Model', { exact: true })).toBeEnabled();
+    await page.getByLabel('Prompt', { exact: true }).fill('browser-cancel-test');
+    await page.getByRole('button', { name: 'Send prompt', exact: true }).click();
+    await expect(page.locator('#ambient-creature')).toHaveClass(/is-awake/);
+    await expect(page.locator('#test-output')).toContainText('First chunk');
+    await expect(page.locator('.ambient-connection.is-busy')).toHaveCount(1);
+    await page.getByLabel('Ambient creature', { exact: true }).selectOption('still');
+    await page.screenshot({ path: test.info().outputPath('creature-test-page.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Canceled.');
+    await page.getByLabel('Ambient creature', { exact: true }).selectOption('off');
+    let polls = 0;
+    await page.route('**/dashboard/status', async route => { polls++; await route.continue(); });
+    await page.clock.install();
+    await page.clock.fastForward(15000);
+    expect(polls).toBe(0);
+    await expect(page.getByRole('button', { name: 'Send prompt', exact: true })).toBeEnabled();
+});
+
+test('stale status suppresses lights and test-page visibility suspends its polling', async ({ page }) => {
+    await page.setViewportSize({ width: 2560, height: 1440 });
+    const view = await (await api.get(`${url}/dashboard/status`)).json();
+    view.workers[0].inflight = 1;
+    let failed = false;
+    let polls = 0;
+    await page.route('**/dashboard/status', route => {
+        polls++;
+        return failed ? route.fulfill({ status: 503 }) : route.fulfill({ json: view });
+    });
+    await page.goto(`${url}/dashboard/test`);
+    await expect(page.locator('#ambient-creature')).toHaveClass(/is-awake/);
+    failed = true;
+    await page.clock.install();
+    await page.clock.fastForward(3100);
+    await expect(page.locator('#ambient-state')).toHaveText('Status unavailable');
+    await expect(page.locator('#ambient-creature')).toHaveClass(/is-stale/);
+    expect(await page.locator('#ambient-creature').evaluate(node => node.animationsPaused())).toBe(true);
+    await page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    const paused = polls;
+    await page.clock.fastForward(15000);
+    expect(polls).toBe(paused);
+    failed = false;
+    await page.evaluate(() => {
+        delete document.hidden;
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.clock.fastForward(3100);
+    await expect(page.locator('#ambient-creature')).not.toHaveClass(/is-stale/);
+});
+
 test('inference test streams safe text and clears without exposing credentials', async ({ page }) => {
     await page.goto(url);
     await page.getByRole('link', { name: 'Test inference', exact: true }).click();

@@ -18,10 +18,10 @@ import (
 	"time"
 )
 
-//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js web/readme.html web/test.html web/test.js README.md
+//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js web/readme.html web/test.html web/test.js web/ambient.html web/ambient.css web/ambient.js README.md
 var dashboardAssets embed.FS
 
-var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "web/dashboard.html"))
+var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "web/dashboard.html", "web/ambient.html"))
 var joinTemplate = template.Must(template.ParseFS(dashboardAssets, "web/join.html"))
 
 type activeJob struct {
@@ -205,16 +205,20 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		}{ClientToken: h.clientToken})
 	case "/dashboard/readme.html":
 		h.serveGuide(w, r)
-	case "/dashboard/dashboard.js":
-		script, err := dashboardAssets.ReadFile("web/dashboard.js")
+	case "/dashboard/dashboard.js", "/dashboard/ambient.js":
+		script, err := dashboardAssets.ReadFile("web/" + strings.TrimPrefix(r.URL.Path, "/dashboard/"))
 		if err != nil {
 			http.Error(w, "script unavailable", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write(script)
-	case "/dashboard/style.css":
-		css, err := dashboardAssets.ReadFile("web/dashboard.css")
+	case "/dashboard/style.css", "/dashboard/ambient.css":
+		name := "web/dashboard.css"
+		if r.URL.Path == "/dashboard/ambient.css" {
+			name = "web/ambient.css"
+		}
+		css, err := dashboardAssets.ReadFile(name)
 		if err != nil {
 			http.Error(w, "stylesheet unavailable", http.StatusInternalServerError)
 			return

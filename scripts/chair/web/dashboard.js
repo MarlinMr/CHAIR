@@ -90,11 +90,12 @@
         lastUpdated = `${new Date(view.generated_at).toISOString().slice(11, 19)} UTC`;
         failed = false;
         message();
+        document.dispatchEvent(new CustomEvent('chair:snapshot', { detail: view }));
     }
 
     function schedule() {
         clearTimeout(timer);
-        if (live) timer = setTimeout(refresh, 3000);
+        if (live && !document.hidden) timer = setTimeout(refresh, 3000);
     }
 
     async function refresh() {
@@ -111,6 +112,7 @@
         } catch {
             failed = true;
             message();
+            document.dispatchEvent(new CustomEvent('chair:stale'));
         } finally {
             busy = false;
             schedule();
@@ -129,7 +131,9 @@
         history.replaceState(null, '', `${location.pathname}${live ? '' : '?refresh=off'}`);
         message();
         schedule();
+        document.dispatchEvent(new CustomEvent('chair:refresh', { detail: { live } }));
     });
+    document.addEventListener('visibilitychange', schedule);
     const revealButton = document.getElementById('reveal-token');
     if (revealButton) {
         const panel = document.getElementById('client-token-panel');
