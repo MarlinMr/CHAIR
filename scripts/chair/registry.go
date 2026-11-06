@@ -327,6 +327,7 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 	logger.Debug("inference dispatched")
 	logged := &requestLogWriter{ResponseWriter: w}
 	finished := false
+	var usage *usageObserver
 	defer func() {
 		outcome := "completed"
 		switch {
@@ -339,6 +340,22 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 			outcome = "failed"
 		}
 		logger.Debug("inference finished", "outcome", outcome, "status", logged.status, "duration_ms", time.Since(started).Milliseconds(), "response_bytes", logged.bytes)
+		if h.stats != nil && r.Context().Value(inferenceTestContextKey{}) != true {
+			credited := outcome
+			if credited != "canceled" && (logged.status < http.StatusOK || logged.status >= http.StatusMultipleChoices) {
+				credited = "failed"
+			}
+			if usage != nil && (usage.failed || ((usage.format == "sse" || usage.format == "ndjson") && usage.eof && !usage.terminal)) && credited == "completed" {
+				credited = "failed"
+			}
+			model := request.Model
+			if worker.engineType == engineOllama {
+				model = canonicalModel(model)
+			}
+			if err := h.stats.record(worker.id, model, credited, usage, time.Since(started)); err != nil {
+				logger.Warn("statistics update failed", "reason", "statistics_storage_unavailable")
+			}
+		}
 	}()
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
@@ -347,14 +364,18 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 	// This hostname is logical. The transport opens a stream in this worker's
 	// outbound connection, never a connection to an advertised worker address.
 	proxy := inferenceProxy(&url.URL{Scheme: "http", Host: "worker"}, worker.transport, logger)
-	if r.Context().Value(inferenceTestContextKey{}) == true {
-		// Browser tests must not accept upstream cookies, redirects, CORS policy,
-		// or arbitrary headers/trailers from the worker's local engine.
-		proxy.ModifyResponse = func(response *http.Response) error {
+	proxy.ModifyResponse = func(response *http.Response) error {
+		if h.stats != nil && r.Context().Value(inferenceTestContextKey{}) != true && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+			usage = newUsageObserver(r.URL.Path, response.Header.Get("Content-Type"))
+			response.Body = &observedBody{ReadCloser: response.Body, usage: usage}
+		}
+		if r.Context().Value(inferenceTestContextKey{}) == true {
+			// Browser tests must not accept upstream cookies, redirects, CORS policy,
+			// or arbitrary headers/trailers from the worker's local engine.
 			response.Header = http.Header{"Content-Type": response.Header.Values("Content-Type")}
 			response.Trailer = nil
-			return nil
 		}
+		return nil
 	}
 	proxy.ServeHTTP(logged, r)
 	finished = true

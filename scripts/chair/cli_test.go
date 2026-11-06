@@ -53,7 +53,7 @@ func TestCLI_VersionPrintsWithoutStartingServices(t *testing.T) {
 			stdout, stderr, err := chairCommand(t, args...)
 
 			require.NoError(t, err)
-			assert.Equal(t, "CHAIR v0.1.7\n", stdout)
+			assert.Equal(t, "CHAIR v0.1.8\n", stdout)
 			assert.Empty(t, stderr)
 		})
 	}
@@ -69,7 +69,7 @@ func TestCLI_HelpStartsWithVersionAndExitsSuccessfully(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Empty(t, stdout)
-			assert.True(t, strings.HasPrefix(stderr, "CHAIR v0.1.7 — Central Hub for AI Routing\n"))
+			assert.True(t, strings.HasPrefix(stderr, "CHAIR v0.1.8 — Central Hub for AI Routing\n"))
 			assert.Contains(t, stderr, usage)
 			assert.Contains(t, stderr, expectedFlag)
 			assert.Contains(t, stderr, "-version")

@@ -60,7 +60,8 @@ func TestAmbientCreature_IsSharedAcrossOverviewAndInferenceTest(t *testing.T) {
 			assert.Contains(t, response.Body.String(), `aria-hidden="true"`)
 			assert.Contains(t, response.Body.String(), `href="/dashboard/ambient.css"`)
 			assert.Contains(t, response.Body.String(), `src="/dashboard/ambient.js" defer`)
-			assert.Contains(t, response.Body.String(), `id="ambient-mode"`)
+			assert.NotContains(t, response.Body.String(), `id="ambient-mode"`)
+			assert.NotContains(t, response.Body.String(), `id="ambient-controls"`)
 		})
 	}
 	test("overview", "/")

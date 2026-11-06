@@ -71,6 +71,7 @@ func runHub(ctx context.Context, args []string) error {
 	allowTokenReveal := flags.Bool("allow-client-token-reveal", false, "allow dashboard-authenticated users to explicitly reveal the inference client token")
 	allowTest := flags.Bool("allow-inference-test", false, "allow dashboard-authenticated users to send bounded test prompts")
 	enrollmentPath := flags.String("enrollment-token-file", "", "enable /join using a separate shared enrollment token; persist generated worker tokens in --workers-file")
+	statsPath := flags.String("stats-file", "", "enable persistent worker scoreboards using this owner-only database file")
 	if err := parseCommandFlags(flags, args); err != nil {
 		return err
 	}
@@ -103,6 +104,7 @@ func runHub(ctx context.Context, args []string) error {
 	}
 	h := newHub(clientToken, workerTokens, *maxConcurrentRequests)
 	h.logger = logger
+	defer h.Close()
 	if *dashboardPath != "" {
 		token, err := tokenFile(*dashboardPath)
 		if err != nil {
@@ -142,7 +144,13 @@ func runHub(ctx context.Context, args []string) error {
 		defer h.enrollment.root.Close()
 		logger.Warn("worker enrollment enabled; enrollment credential holders can receive inference requests", "path", "/join")
 	}
-	defer h.Close()
+	if *statsPath != "" {
+		h.stats, err = openScoreStore(*statsPath)
+		if err != nil {
+			return err
+		}
+		logger.Info("persistent worker scoreboards enabled")
+	}
 	server := &http.Server{
 		Addr:              *listen,
 		Handler:           h,
@@ -152,7 +160,7 @@ func runHub(ctx context.Context, args []string) error {
 		ErrorLog:          log.New(io.Discard, "", 0),
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
-	stop := context.AfterFunc(ctx, func() { _ = h.Close(); _ = server.Close() })
+	stop := context.AfterFunc(ctx, func() { _ = server.Close(); _ = h.Close() })
 	defer stop()
 	logger.Info("starting experimental CHAIR TLS hub", "listen", *listen, "max_concurrent_requests", *maxConcurrentRequests, "authorized_workers", len(workerTokens))
 	if err := server.ListenAndServeTLS(*cert, *key); err != nil && !errors.Is(err, http.ErrServerClosed) {

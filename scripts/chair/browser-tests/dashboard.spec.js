@@ -14,7 +14,9 @@ const clientToken = 'client-browser-test-credential-not-for-real-use';
 const workerToken = 'worker-browser-test-credential-not-for-real-use';
 const enrollmentToken = 'enrollment-browser-test-credential-not-for-real-use';
 test.use({ ignoreHTTPSErrors: true, httpCredentials: { username: 'chair', password } });
-let directory, engine, hubProcess, workerProcess, url, api;
+let directory, engine, hubProcess, workerProcess, url, api, hubArgs;
+
+function launchHub() { return spawn(resolve(process.env.CHAIR_TEST_BINARY), hubArgs, { cwd: directory, stdio: 'ignore' }); }
 
 async function listen(server) {
     server.listen(0, '127.0.0.1');
@@ -42,7 +44,7 @@ test.beforeAll(async () => {
                 const input = JSON.parse(body);
                 res.setHeader('Content-Type', 'text/event-stream');
                 res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'First chunk <script>not executable</script>' } }] })}\n\n`);
-                const timer = setTimeout(() => res.end('data: {"choices":[{"delta":{"content":" final chunk"}}]}\n\ndata: [DONE]\n\n'), input.messages[0].content === 'browser-cancel-test' ? 30000 : 1000);
+                const timer = setTimeout(() => res.end('data: {"choices":[{"delta":{"content":" final chunk"}}]}\n\ndata: {"usage":{"completion_tokens":32}}\n\ndata: [DONE]\n\n'), input.messages[0].content === 'browser-cancel-test' ? 30000 : 1000);
                 res.on('close', () => clearTimeout(timer));
             });
             return;
@@ -56,13 +58,18 @@ test.beforeAll(async () => {
     await new Promise(done => reservation.close(done));
     url = `https://127.0.0.1:${port}`;
     const launch = args => spawn(resolve(binary), args, { cwd: directory, stdio: 'ignore' });
-    hubProcess = launch(['hub', '--listen', `127.0.0.1:${port}`, '--tls-cert', 'hub.crt', '--tls-key', 'hub.key', '--client-token-file', 'client.token', '--workers-file', 'workers.json', '--dashboard-token-file', 'dashboard.token', '--dashboard-public', '--allow-client-token-reveal', '--allow-inference-test', '--downloads-dir', 'downloads', '--enrollment-token-file', 'enrollment.token']);
+    hubArgs = ['hub', '--listen', `127.0.0.1:${port}`, '--tls-cert', 'hub.crt', '--tls-key', 'hub.key', '--client-token-file', 'client.token', '--workers-file', 'workers.json', '--dashboard-token-file', 'dashboard.token', '--dashboard-public', '--allow-client-token-reveal', '--allow-inference-test', '--stats-file', 'scores.db', '--downloads-dir', 'downloads', '--enrollment-token-file', 'enrollment.token'];
+    hubProcess = launchHub();
     api = await request.newContext({ ignoreHTTPSErrors: true, httpCredentials: { username: 'chair', password } });
     await expect.poll(async () => {
         try { return (await api.get(url)).status(); } catch { return 0; }
     }, { timeout: 10000 }).toBe(200);
     workerProcess = launch(['worker', '--hub', url, '--ca-file', 'hub.crt', '--worker-id', 'gpu-test', '--worker-token-file', 'worker.token', '--engine', `http://127.0.0.1:${enginePort}`]);
     await expect.poll(async () => (await (await api.get(`${url}/dashboard/status`)).json()).ready_workers, { timeout: 15000 }).toBe(1);
+    await Promise.all(Array.from({ length: 3 }, async () => {
+        const response = await api.post(`${url}/v1/chat/completions`, { headers: { Authorization: `Bearer ${clientToken}` }, data: { model: 'test-model:latest', messages: [{ role: 'user', content: 'scoreboard fixture' }], stream: true, stream_options: { include_usage: true } } });
+        expect(response.status()).toBe(200);
+    }));
 });
 
 test.afterAll(async () => {
@@ -78,7 +85,48 @@ test.afterAll(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
 });
 
-test('left-margin creature preserves layout and shares its preference across pages', async ({ page }) => {
+test('scoreboard shows persistent contributions with model filtering and quiet live refresh', async ({ page }) => {
+    await page.goto(url);
+    await page.getByRole('link', { name: 'Scoreboard', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Every worker makes a difference.' })).toBeVisible();
+    await expect(page.locator('#score-tokens')).toContainText('gpu-test');
+    await expect(page.locator('#score-tokens')).toContainText('96');
+    await expect(page.locator('#score-speed')).toContainText('test-model:latest');
+    await page.getByLabel('Compare model').selectOption('test-model:latest');
+    await expect(page.getByRole('status')).toContainText('Updated');
+    await page.getByLabel('Compare model').focus();
+    await page.screenshot({ path: test.info().outputPath('scoreboard-desktop.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Pause live scores' }).click();
+    let refreshes = 0;
+    await page.route('**/dashboard/scoreboard/status*', async route => { refreshes++; await route.continue(); });
+    await page.clock.install();
+    await page.clock.fastForward(10000);
+    expect(refreshes).toBe(0);
+    await page.getByRole('button', { name: 'Refresh scores' }).click();
+    await expect.poll(() => refreshes).toBe(1);
+    await expect(page.getByLabel('Compare model')).toHaveValue('test-model:latest');
+    await page.route('**/dashboard/scoreboard/status*', route => route.fulfill({ status: 503 }));
+    await page.getByRole('button', { name: 'Refresh scores' }).click();
+    await expect(page.getByRole('status')).toContainText('keeping the last snapshot');
+    await expect(page.locator('#score-tokens')).toContainText('96');
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath('scoreboard-mobile.png'), fullPage: true });
+});
+
+test('scoreboard renders labels as text and visibly warns about missed writes', async ({ page }) => {
+    const view = await (await api.get(`${url}/dashboard/scoreboard/status`)).json();
+    view.tokens[0].worker = '<script>not executable</script>';
+    view.missed = 2;
+    await page.route('**/dashboard/scoreboard/status*', route => route.fulfill({ json: view }));
+    await page.goto(`${url}/dashboard/scoreboard`);
+    await page.getByRole('button', { name: 'Refresh scores' }).click();
+    await expect(page.locator('#score-tokens')).toContainText('<script>not executable</script>');
+    await expect(page.locator('#score-tokens script')).toHaveCount(0);
+    await expect(page.locator('#score-warning')).toBeVisible();
+});
+
+test('left-margin creature preserves layout on both pages without a controller', async ({ page }) => {
     await page.setViewportSize({ width: 3440, height: 1440 });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -92,18 +140,15 @@ test('left-margin creature preserves layout and shares its preference across pag
     expect(mascot.x).toBeLessThan(original.x);
     expect(mascot.y).toBeGreaterThan(logo.y + logo.height);
     await expect(page.locator('[data-ambient-worker="gpu-test"]')).toHaveCount(1);
-    await page.getByLabel('Ambient creature', { exact: true }).selectOption('off');
+    await expect(page.locator('#ambient-controls, #ambient-mode')).toHaveCount(0);
+    await art.evaluate(node => node.setAttribute('hidden', ''));
     await expect(art).toBeHidden();
     expect(await page.locator('main').boundingBox()).toEqual(original);
     await page.getByRole('link', { name: 'Test inference', exact: true }).click();
-    await expect(page.getByLabel('Ambient creature', { exact: true })).toHaveValue('off');
-    await expect(art).toBeHidden();
-    await page.getByLabel('Ambient creature', { exact: true }).selectOption('still');
     await expect(art).toBeVisible();
-    await expect(art).toHaveClass(/is-still/);
+    await expect(page.locator('#ambient-controls, #ambient-mode')).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(art).toBeHidden();
-    await expect(page.locator('#ambient-controls')).toBeHidden();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     let narrowPolls = 0;
     await page.route('**/dashboard/status', async route => { narrowPolls++; await route.continue(); });
@@ -113,14 +158,12 @@ test('left-margin creature preserves layout and shares its preference across pag
     expect(errors).toEqual([]);
 });
 
-test('creature preferences work even when browser storage is blocked', async ({ page }) => {
+test('ambient creature does not depend on browser storage', async ({ page }) => {
     await page.addInitScript(() => Object.defineProperty(window, 'localStorage', { get() { throw new Error('storage blocked'); } }));
     await page.setViewportSize({ width: 2560, height: 1440 });
     await page.goto(`${url}/?refresh=off`);
     await expect(page.locator('#ambient-creature')).toBeVisible();
-    await page.getByLabel('Ambient creature', { exact: true }).selectOption('off');
-    await expect(page.locator('#ambient-creature')).toBeHidden();
-    await page.getByLabel('Ambient creature', { exact: true }).selectOption('still');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await expect(page.locator('#ambient-creature')).toBeVisible();
     await expect(page.locator('#ambient-creature')).toHaveClass(/is-still/);
 });
@@ -135,7 +178,7 @@ test('tentacles keep worker identities, wake for jobs, and retract on disconnect
     await page.goto(url);
     await page.getByRole('link', { name: 'Refresh overview', exact: true }).click();
     await expect(page.locator('[data-ambient-worker]')).toHaveCount(6);
-    expect(await page.locator('[data-ambient-worker="gpu-fern"] .ambient-branch').evaluate(node => node.getAnimations().some(animation => animation.effect.getTiming().duration === 2600))).toBe(true);
+    expect(await page.locator('[data-ambient-worker="gpu-fern"] .ambient-reveal').evaluate(node => node.getAnimations().some(animation => animation.effect.getTiming().duration === 2600))).toBe(true);
     await page.locator('[data-ambient-worker="gpu-test"]').evaluate(node => { node.dataset.identity = 'original'; });
     const path = await page.locator('[data-ambient-worker="gpu-test"] .ambient-branch').getAttribute('d');
     first.inflight = 1;
@@ -145,12 +188,18 @@ test('tentacles keep worker identities, wake for jobs, and retract on disconnect
     await expect(page.locator('[data-ambient-worker="gpu-test"]')).toHaveAttribute('data-identity', 'original');
     expect(await page.locator('[data-ambient-worker="gpu-test"] .ambient-branch').getAttribute('d')).toBe(path);
     await expect(page.locator('.has-packet')).toHaveCount(2);
-    await page.getByLabel('Ambient creature', { exact: true }).selectOption('still');
+    await expect(page.locator('.has-packet .ambient-packet')).toHaveCount(6);
+    await expect(page.locator('[data-ambient-worker="gpu-test"] .ambient-name-hole')).toHaveCount(6);
+    await expect(page.locator('[data-ambient-worker="gpu-test"] .ambient-sucker').first()).toBeAttached();
+    const screenStyle = await page.locator('[data-ambient-worker="gpu-test"] .ambient-screen').evaluate(node => ({ opacity: getComputedStyle(node).opacity, filter: getComputedStyle(node).filter }));
+    expect(screenStyle.opacity).toBe('1');
+    expect(screenStyle.filter).toContain('drop-shadow');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.screenshot({ path: test.info().outputPath('creature-ultrawide-light.png'), fullPage: true });
     await page.screenshot({ path: test.info().outputPath('creature-closeup.png'), clip: { x: 0, y: 65, width: 240, height: 280 } });
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.screenshot({ path: test.info().outputPath('creature-ultrawide-dark.png'), fullPage: true });
-    await page.getByLabel('Ambient creature', { exact: true }).selectOption('on');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.clock.install();
     first.inflight = 0;
     view.workers[2].inflight = 0;
@@ -186,10 +235,10 @@ test('ambient connections are bounded, labels are safe, and reduced motion is st
     await expect(page.locator('#ambient-creature')).toHaveClass(/is-still/);
     expect(await page.locator('#ambient-creature').evaluate(node => node.animationsPaused())).toBe(true);
     expect(await page.locator('#ambient-creature').evaluate(node => node.getAnimations({ subtree: true }).filter(animation => animation.playState === 'running').length)).toBe(0);
-    expect(await page.locator('.has-packet').count()).toBeLessThanOrEqual(4);
+    expect(await page.locator('.has-packet .ambient-packet').count()).toBeLessThanOrEqual(18);
 });
 
-test('test page wakes the creature immediately and stops ambient polling when off', async ({ page }) => {
+test('test page wakes the creature immediately and stops ambient polling on narrow screens', async ({ page }) => {
     await page.setViewportSize({ width: 2560, height: 1440 });
     await page.goto(`${url}/dashboard/test`);
     await expect(page.locator('[data-ambient-worker="gpu-test"]')).toHaveCount(1);
@@ -199,11 +248,12 @@ test('test page wakes the creature immediately and stops ambient polling when of
     await expect(page.locator('#ambient-creature')).toHaveClass(/is-awake/);
     await expect(page.locator('#test-output')).toContainText('First chunk');
     await expect(page.locator('.ambient-connection.is-busy')).toHaveCount(1);
-    await page.getByLabel('Ambient creature', { exact: true }).selectOption('still');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.screenshot({ path: test.info().outputPath('creature-test-page.png'), fullPage: true });
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('Canceled.');
-    await page.getByLabel('Ambient creature', { exact: true }).selectOption('off');
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.locator('#ambient-creature')).toBeHidden();
     let polls = 0;
     await page.route('**/dashboard/status', async route => { polls++; await route.continue(); });
     await page.clock.install();
@@ -227,7 +277,7 @@ test('stale status suppresses lights and test-page visibility suspends its polli
     failed = true;
     await page.clock.install();
     await page.clock.fastForward(3100);
-    await expect(page.locator('#ambient-state')).toHaveText('Status unavailable');
+    await expect(page.locator('#ambient-creature')).toHaveAttribute('data-activity', 'unavailable');
     await expect(page.locator('#ambient-creature')).toHaveClass(/is-stale/);
     expect(await page.locator('#ambient-creature').evaluate(node => node.animationsPaused())).toBe(true);
     await page.evaluate(() => {
@@ -558,4 +608,24 @@ test('invalid enrollment credentials do not register a worker or retry automatic
     await page.clock.fastForward(20000);
     expect(submissions).toBe(1);
     expect(await readFile(join(directory, 'workers.json'), 'utf8')).toBe(before);
+});
+
+test('scoreboard retains contributions and start time after a hub restart', async () => {
+    const before = await (await api.get(`${url}/dashboard/scoreboard/status`)).json();
+    expect(before.tokens[0].tokens).toBe(96);
+    const stopped = once(hubProcess, 'exit');
+    hubProcess.kill('SIGTERM');
+    const [code] = await stopped;
+    expect(code).toBe(0);
+
+    hubProcess = launchHub();
+    await expect.poll(async () => {
+        try { return (await api.get(`${url}/dashboard/scoreboard/status`)).status(); } catch { return 0; }
+    }, { timeout: 10000 }).toBe(200);
+    const after = await (await api.get(`${url}/dashboard/scoreboard/status`)).json();
+    expect(after.since).toBe(before.since);
+    expect(after.tokens).toEqual(before.tokens);
+    expect(after.requests).toEqual(before.requests);
+    expect(after.speed).toEqual(before.speed);
+    await expect.poll(async () => (await (await api.get(`${url}/dashboard/status`)).json()).ready_workers, { timeout: 15000 }).toBe(1);
 });

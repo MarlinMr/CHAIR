@@ -51,7 +51,8 @@ stream and cancels the local engine request without closing other streams.
   inventories, and active hub-routed jobs, protected by a separate credential.
 - Optional authenticated browser test page (`--allow-inference-test`) for bounded
   single-turn prompts, streamed text, and cancellation without revealing tokens.
-- End-to-end TLS to the hub, with system trust or an additional CA file.
+- TLS to the hub and encrypted hub/worker tunnels, with system trust or an
+  additional CA file. **The hub terminates TLS and can read inference content.**
 - Operator-provisioned identities and a distinct bearer token for each worker,
   separate from the client token. One live connection per authorized identity;
   another worker cannot use its own token to claim a different identity.
@@ -95,6 +96,20 @@ experiment to untrusted clients. Inventory can change between refresh and
 inference; a resulting engine error is returned without replay. Existing PAIR
 engine-management and scheduler integration remains separate work: this prototype
 uses active-request counts, not PAIR's GPU-pressure scheduler.
+
+## Privacy and future encryption
+
+The hub terminates HTTPS and worker tunnels and can read inference content in
+memory. The selected worker/engine also sees plaintext. Not logging/persisting
+prompts or responses is a software policy, not cryptographic protection from
+the hub operator. Trust both the hub and the workers you join.
+
+[Client-to-worker encryption design note](ENCRYPTION.md) records a possible
+future hub-blind mode, independently verified worker keys, trusted client-side
+adapters, streaming/cancellation requirements, and the limits of hub-delivered
+browser code. It is not implemented or scheduled. Scoreboard usage metadata is
+currently observed in plaintext; a future encrypted mode would need a different
+accounting trust model.
 
 ## Run
 
@@ -312,9 +327,12 @@ refresh** stops polling; **Refresh overview** fetches a snapshot even while paus
 
 On wide screens, a small **ambient creature** sleeps beneath the upper-left
 CHAIR logo. Its tentacles unfurl into the unused top/side margins toward little
-computer endpoints for connected workers. New connections grow a branch;
+computer endpoints for connected workers. Long tentacles use the creature's own
+teal skin, tapered curled tips, and small suction cups rather than thin cables.
+Computer screens glow softly while connected and shine warm gold when busy.
+New connections grow a branch;
 disconnected workers' branches retract. Reported in-flight requests wake the
-creature, and sparse lights travel from busy workers toward it. It settles back
+creature, and small streams of light travel from busy workers toward it. It settles back
 to sleep shortly after activity ends. These are **symbolic activity cues**, not
 network packets, token throughput, GPU utilisation, or proof of engine device use.
 Short API jobs can fall between status snapshots and may not be animated.
@@ -322,25 +340,23 @@ Short API jobs can fall between status snapshots and may not be animated.
 The same decoration appears on the test-inference page, waking immediately when
 you send a prompt; worker-specific lights still use actual reported job metadata,
 not a guessed destination. There are at most eleven individual worker endpoints
-and one grouped endpoint, with at most four light packets visible at a time.
+and one grouped endpoint. Up to six busy branches carry three staggered light
+packets each (at most eighteen packets), travelling toward the creature.
 Existing endpoints keep their positions as status updates arrive.
 
 The existing page layout and content widths are unchanged. The drawing is clipped
 to the gutters and cannot intercept clicks. It hides when either side has less
-than 224 pixels of spare room or the viewport is too short. **Ambient creature:
-On / Still / Off** is available beneath the creature when there is room; the
-preference is stored locally for this origin and shared across the overview/test
-pages. If browser storage is disabled, the choice applies only to the current
-page. **Still** retains static activity changes; **Off** hides the drawing.
-System reduced-motion preferences always suppress movement, even with On chosen.
+than 224 pixels of spare room or the viewport is too short. There is no controller
+or saved creature preference: it is simply part of the page. System reduced-motion
+preferences suppress movement while preserving static activity changes.
 
 The overview reuses its existing status updates: the creature does not add a
 second poll, and **Pause live refresh** freezes its motion/data updates too.
 On the test page only, the visible/enabled creature reads `/dashboard/status`
 approximately every three seconds, with a prompt-time refresh for actual worker
-assignment. Hidden tabs pause motion/polling; narrow screens and Off disable the
-test-page decoration poll. Failed refreshes suppress activity cues and show
-**Status unavailable** until recovery. These features use local embedded SVG,
+assignment. Hidden tabs pause motion/polling; narrow screens disable the test-page
+decoration poll. Failed refreshes suppress activity cues until recovery (the
+overview's normal refresh message still reports the failure). These features use local embedded SVG,
 CSS, and JavaScript, without external assets, inference requests, or new access
 permissions. No prompts, responses, credentials, or persistent job history feed
 the decoration.
@@ -388,6 +404,91 @@ Browsers may retain Basic credentials until the browser session is closed; use
 a private browser session on shared machines. Token changes require a hub
 restart. Keep this experimental dashboard on trusted networks; worker/model
 names are operational metadata and should not be exposed publicly.
+
+### Persistent contribution scoreboards
+
+Reward contributing workers with an all-time **Scoreboard** page. Add a dedicated
+database path to the hub command:
+
+```text
+--stats-file /path/to/private/chair-scores.db
+```
+
+Create/protect the parent directory first; the database is created owner-only.
+This option enables accounting and Scoreboard navigation on the overview and test
+page. Without it, no scoreboard database is created and those routes are disabled.
+The page at `/dashboard/scoreboard` has three live top-20 rankings:
+
+- **Most output tokens:** sums engine-reported output counts. Usage coverage
+  shows how many completed requests supplied usable token counts. Unreported
+  usage is unavailable, not estimated from text and not treated as zero.
+- **Fastest output delivery:** observed end-to-end output tokens/second for each
+  worker/model pair, computed as total reported tokens divided by the sum of
+  those requests' elapsed times. This includes prompt processing, engine queues,
+  and tunnel/network time; it is **not** pure decode speed or GPU utilisation.
+  Qualification requires at least three measured positive-token requests and
+  32 tokens. Use **Compare model** for fairer comparisons; aliases, prompts,
+  context lengths, batching, and engine settings can still differ.
+- **Most completed requests:** successfully forwarded API inference requests,
+  with failed/interrupted and canceled requests shown separately. Requests
+  rejected before a worker is selected cannot be attributed. Browser test prompts
+  are excluded from all competitive totals. No credit is given for failed,
+  canceled, or recognized incomplete streams.
+
+The page refreshes every three seconds, supports manual refresh and pause, and
+keeps the last view if updates fail. It inherits dashboard TLS/login policy;
+`--dashboard-public` also exposes read-only scores. Worker IDs/model names are
+operational metadata. There is no browser reset/edit API.
+
+#### Where token counts come from
+
+The hub observes metadata while forwarding response bytes unchanged. Ollama
+native routes use final `eval_count`; Chat Completions uses
+`usage.completion_tokens`; Responses uses completed-response `usage.output_tokens`.
+For streamed Chat Completions, clients generally need:
+
+```json
+{"stream":true,"stream_options":{"include_usage":true}}
+```
+
+The engine must support and actually return usage. CHAIR **does not rewrite
+requests** to force it, execute extra requests, or count text as tokens. Repeated
+identical usage frames count once; invalid, negative, conflicting, or implausibly
+large counts are not credited. Metadata parsing is bounded to 256 KiB per JSON
+response/SSE event/NDJSON line; oversized frames can leave usage unavailable.
+Streams require their completion marker for token credit. Other valid requests
+can still increase completed-request totals without token/speed credit.
+
+#### Persistence, backups, and limitations
+
+The hub writes aggregate counters in synchronous **bbolt transactions**, retaining
+scores across worker reconnects and hub restarts. Identity is the worker ID, not a
+physical-machine attestation or API-client account. Changing/reusing an ID changes
+who owns its historical score. Disconnected/removed workers remain in rankings.
+No prompts, response text, credentials, or individual request records are stored;
+only per-worker/model counters, accumulated timing, and database timestamps.
+
+Use one hub per database; the database locks out another writer. Keep it on a
+reliable local persistent filesystem, not a shared network volume. In containers,
+mount a persistent volume/directory for this path; do not put it on tmpfs or an
+ephemeral writable layer. On Windows, configure restrictive directory/file ACLs.
+The parent directory must be trusted; do not replace/edit the database while the
+hub is running. Unknown/corrupt files are rejected rather than reset. To back up
+or move the database, stop the hub cleanly and copy the file before restarting.
+There is no automatic retention reset or historical per-request log.
+
+Transactions may add a small completion-time storage cost. Storage write failures
+do not break inference, but can lose contribution updates: operational logs and
+the scoreboard warn about missed updates. The warning count is persisted when
+storage recovers; a crash during an outage can also lose the in-memory warning.
+A crash while work is in flight does not earn completion credit. There is a
+16,384 worker/model aggregate limit; reaching it produces a storage warning rather
+than evicting old scores. Monitor disk space and keep backups.
+
+These are **reported contributions, not a payment ledger**: engines can lie about
+usage and clients can manufacture traffic. There are no cryptographic proofs of
+useful work or anti-gaming guarantees. Local tests use fixtures; real-engine token
+reporting and non-Linux persistence still require deployment validation.
 
 #### Send a small test prompt from the browser
 

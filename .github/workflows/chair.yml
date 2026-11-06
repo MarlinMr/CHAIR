@@ -94,13 +94,17 @@ jobs:
                   suffix=''
                   if [[ "$GOOS" == windows ]]; then suffix='.exe'; fi
                   go build -trimpath -o "${staging}/chair${suffix}" .
-                  cp README.md THIRD_PARTY_NOTICES.md ../../LICENSE "$staging/"
+                  cp README.md ENCRYPTION.md THIRD_PARTY_NOTICES.md ../../LICENSE "$staging/"
                   websocket_dir=$(go list -m -f '{{.Dir}}' github.com/coder/websocket)
                   yamux_dir=$(go list -m -f '{{.Dir}}' github.com/hashicorp/yamux)
                   goldmark_dir=$(go list -m -f '{{.Dir}}' github.com/yuin/goldmark)
+                  bbolt_dir=$(go list -m -f '{{.Dir}}' go.etcd.io/bbolt)
+                  xsys_dir=$(go list -m -f '{{.Dir}}' golang.org/x/sys)
                   cp "${websocket_dir}/LICENSE.txt" "${staging}/licenses/coder-websocket-LICENSE.txt"
                   cp "${yamux_dir}/LICENSE" "${staging}/licenses/hashicorp-yamux-LICENSE.txt"
                   cp "${goldmark_dir}/LICENSE" "${staging}/licenses/yuin-goldmark-LICENSE.txt"
+                  cp "${bbolt_dir}/LICENSE" "${staging}/licenses/etcd-bbolt-LICENSE.txt"
+                  cp "${xsys_dir}/LICENSE" "${staging}/licenses/golang-x-sys-LICENSE.txt"
                   cp "$(go env GOROOT)/LICENSE" "${staging}/licenses/go-LICENSE.txt"
                   printf 'CHAIR experimental preview\nSource: https://github.com/MarlinMr/CHAIR\nCommit: %s\nTarget: %s/%s\nToolchain: %s\n' \
                     "$(git rev-parse HEAD)" "$GOOS" "$GOARCH" "$(go version)" > "${staging}/BUILD_INFO.txt"

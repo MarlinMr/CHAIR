@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js web/readme.html web/test.html web/test.js web/ambient.html web/ambient.css web/ambient.js README.md
+//go:embed web/dashboard.html web/dashboard.css web/dashboard.js web/join.html web/enrollment.js web/readme.html web/test.html web/test.js web/ambient.html web/ambient.css web/ambient.js web/scoreboard.html web/scoreboard.js README.md
 var dashboardAssets embed.FS
 
 var dashboardTemplate = template.Must(template.ParseFS(dashboardAssets, "web/dashboard.html", "web/ambient.html"))
@@ -66,6 +66,7 @@ type dashboardView struct {
 	DownloadsEnabled  bool                `json:"-"`
 	EnrollmentEnabled bool                `json:"-"`
 	TestEnabled       bool                `json:"-"`
+	ScoreboardEnabled bool                `json:"-"`
 }
 
 func (h *hub) enableDashboard(token string) error {
@@ -117,6 +118,11 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	join := r.URL.Path == "/join"
+	scoreboard := r.URL.Path == "/dashboard/scoreboard" || r.URL.Path == "/dashboard/scoreboard/status" || r.URL.Path == "/dashboard/scoreboard.js"
+	if scoreboard && h.stats == nil {
+		http.NotFound(w, r)
+		return
+	}
 	test := r.URL.Path == "/dashboard/test" || r.URL.Path == "/dashboard/test.js" || strings.HasPrefix(r.URL.Path, "/dashboard/test/")
 	if test && !h.allowInferenceTest {
 		http.NotFound(w, r)
@@ -151,10 +157,15 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	paused := (r.URL.Path == "/" || access) && r.URL.RawQuery == "refresh=off"
+	scoreQuery := false
+	if r.URL.Path == "/dashboard/scoreboard/status" && r.URL.RawQuery != "" {
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		scoreQuery = err == nil && len(query) == 1 && len(query["model"]) == 1 && (query.Get("model") == "" || validModel(query.Get("model")))
+	}
 	action := reveal || testRun || (join && r.Method == http.MethodPost)
 	publicNavigation := (h.dashboardPublic || join) && !action && !access && !test && r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
 	crossSite := r.Header.Get("Sec-Fetch-Site") == "cross-site" && !publicNavigation
-	if (r.URL.RawQuery != "" && !paused) || (r.Header.Get("Origin") != "" && !sameDashboardOrigin(r.Header.Get("Origin"), r.Host)) || crossSite {
+	if (r.URL.RawQuery != "" && !paused && !scoreQuery) || (r.Header.Get("Origin") != "" && !sameDashboardOrigin(r.Header.Get("Origin"), r.Host)) || crossSite {
 		http.Error(w, "cross-origin requests and unsupported query strings are not accepted", http.StatusForbidden)
 		return
 	}
@@ -176,6 +187,8 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/dashboard/scoreboard", "/dashboard/scoreboard.js", "/dashboard/scoreboard/status":
+		h.serveScoreboard(w, r)
 	case "/dashboard/test", "/dashboard/test.js", "/dashboard/test/models", "/dashboard/test/run":
 		h.serveInferenceTest(w, r)
 	case "/join":
@@ -240,6 +253,7 @@ func (h *hub) serveDashboard(w http.ResponseWriter, r *http.Request) {
 		view.DownloadsEnabled = h.downloadsRoot != nil
 		view.EnrollmentEnabled = h.enrollment != nil
 		view.TestEnabled = h.allowInferenceTest
+		view.ScoreboardEnabled = h.stats != nil
 		if err := dashboardTemplate.Execute(&page, view); err != nil {
 			http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
 			return

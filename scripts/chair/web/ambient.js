@@ -4,20 +4,14 @@
 (() => {
     const svg = document.getElementById('ambient-creature');
     if (!svg) return;
-    const controls = document.getElementById('ambient-controls');
-    const select = document.getElementById('ambient-mode');
-    const state = document.getElementById('ambient-state');
     const branches = document.getElementById('ambient-connections');
     const main = document.querySelector('main');
     const overview = Boolean(document.getElementById('workers'));
     const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-    const key = 'chair.ambient-creature';
     const ns = 'http://www.w3.org/2000/svg';
     const connections = new Map();
     const retiring = new Map();
-    let mode = 'on';
-    try { const stored = localStorage.getItem(key); if (['on', 'still', 'off'].includes(stored)) mode = stored; } catch { /* Storage can be disabled. */ }
-    select.value = mode;
+    let serial = 0;
     let live = !overview || document.body.dataset.live === 'true';
     let stale = false;
     let localActive = false;
@@ -36,7 +30,7 @@
         for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
         return node;
     }
-    const moving = () => mode === 'on' && !reduced.matches && live && !document.hidden && !stale && visible;
+    const moving = () => !reduced.matches && live && !document.hidden && !stale && visible;
 
     function activity() {
         if (stopped) return;
@@ -52,15 +46,24 @@
     }
 
     function paint() {
-        svg.toggleAttribute('hidden', !visible || mode === 'off');
+        svg.toggleAttribute('hidden', !visible);
+        if (visible) {
+            for (const connection of connections.values()) {
+                connection.label.removeAttribute('textLength');
+                if (connection.label.getComputedTextLength() > 128) {
+                    connection.label.setAttribute('textLength', '128');
+                    connection.label.setAttribute('lengthAdjust', 'spacingAndGlyphs');
+                }
+            }
+        }
         svg.classList.toggle('is-awake', awake && (!stale || localActive));
-        svg.classList.toggle('is-still', mode !== 'on' || reduced.matches);
+        svg.classList.toggle('is-still', reduced.matches);
         svg.classList.toggle('is-paused', !live || document.hidden);
         svg.classList.toggle('is-stale', stale);
-        state.textContent = stale ? 'Status unavailable' : !live ? 'Live refresh paused' : awake ? 'Gently gathering light' : 'Sleeping';
+        svg.dataset.activity = stale ? 'unavailable' : !live ? 'paused' : awake ? 'awake' : 'sleeping';
         if (moving() && awake) svg.unpauseAnimations(); else svg.pauseAnimations();
         for (const animation of svg.getAnimations({ subtree: true })) {
-            if (!(animation instanceof CSSAnimation) && (mode !== 'on' || reduced.matches || !visible)) animation.cancel();
+            if (!(animation instanceof CSSAnimation) && (reduced.matches || !visible)) animation.cancel();
             else if (moving()) animation.play();
             else animation.pause();
         }
@@ -78,34 +81,87 @@
         const lane = top + 9 + row * .7;
         // Every route uses only the top gutter and outer margins. A clip is an
         // additional safety net while scrolling, resizing, or zooming.
+        const side = onRight ? 1 : -1;
+        const curl = `C${x + side * 11} ${y - 5} ${x + side * 28} ${y + 19} ${x + side * 51} ${y + 8} C${x + side * 73} ${y - 3} ${x + side * 58} ${y - 24} ${x + side * 43} ${y - 16} C${x + side * 32} ${y - 9} ${x + side * 39} ${y} ${x + side * 47} ${y - 5}`;
         const d = onRight
-            ? `M82 ${top + 82} C145 ${top + 120} 150 ${lane} 205 ${lane} H${edge - 40} Q${edge} ${lane} ${edge} ${lane + 45} C${edge + 15} ${y - 90} ${x - 80} ${y + 25} ${x} ${y}`
-            : `M70 ${top + 88} C35 ${top + 155} ${edge} ${top + 115} ${edge} ${top + 205} C${edge + 20} ${y - 55} 22 ${y + 45} ${x} ${y}`;
-        connection.path.setAttribute('d', d);
-        connection.detail.setAttribute('d', d);
-        connection.motion.setAttribute('path', d);
+            ? `M82 ${top + 82} C145 ${top + 120} 150 ${lane} 205 ${lane} H${edge - 40} Q${edge} ${lane} ${edge} ${lane + 45} C${edge + 15} ${y - 100} ${x + 75} ${y - 48} ${x + 48} ${y - 22} ${curl}`
+            : `M70 ${top + 88} C35 ${top + 155} ${edge} ${top + 115} ${edge} ${top + 205} C${edge + 20} ${y - 70} ${x - 75} ${y - 48} ${x - 48} ${y - 22} ${curl}`;
+        connection.mask.setAttribute('width', width);
+        connection.mask.setAttribute('height', height);
+        if (connection.spine.getAttribute('d') === d) return;
+        connection.spine.setAttribute('d', d);
+        connection.reveal.setAttribute('d', d);
+        connection.rim.setAttribute('d', d);
+        for (const motion of connection.motions) motion.setAttribute('path', d);
         connection.computer.setAttribute('transform', `translate(${x} ${y})`);
+        connection.labelPosition = { x: x - 72, y: y + 22 };
+        const length = connection.spine.getTotalLength();
+        const count = Math.min(200, Math.max(48, Math.ceil(length / 18)));
+        const upper = [], lower = [], cups = [];
+        function sample(distance) {
+            const point = connection.spine.getPointAtLength(distance);
+            const before = connection.spine.getPointAtLength(Math.max(0, distance - 1));
+            const after = connection.spine.getPointAtLength(Math.min(length, distance + 1));
+            const angle = Math.atan2(after.y - before.y, after.x - before.x);
+            return { point, angle, nx: -Math.sin(angle), ny: Math.cos(angle), radius: .8 + 5.8 * Math.pow(1 - distance / length, .6) };
+        }
+        const distances = new Set(Array.from({ length: count + 1 }, (_, i) => length * i / count));
+        // Keep tight terminal curls round without oversampling the long,
+        // nearly straight portions of an ultrawide tentacle.
+        for (let distance = Math.max(0, length - 160); distance < length; distance += 2) distances.add(distance);
+        for (const distance of Array.from(distances).sort((a, b) => a - b)) {
+            const { point, nx, ny, radius } = sample(distance);
+            upper.push(`${point.x + nx * radius},${point.y + ny * radius}`);
+            lower.unshift(`${point.x - nx * radius},${point.y - ny * radius}`);
+        }
+        connection.path.setAttribute('d', `M${upper.join(' L')} L${lower.join(' L')} Z`);
+        const spacing = Math.max(18, length / 48);
+        for (let distance = 20; distance < length - 8; distance += spacing) {
+            const { point, angle, nx, ny, radius } = sample(distance);
+            cups.push(element('ellipse', { class: 'ambient-sucker', cx: 0, cy: 0, rx: Math.min(2.5, radius * .65), ry: Math.min(1.6, radius * .45), transform: `translate(${point.x + nx * radius * .48} ${point.y + ny * radius * .48}) rotate(${angle * 180 / Math.PI})` }));
+        }
+        connection.cups.replaceChildren(...cups);
+    }
+
+    function protectNames() {
+        const positions = Array.from(connections.values(), item => item.labelPosition).filter(Boolean);
+        for (const connection of connections.values()) connection.nameHoles.replaceChildren(...positions.map(position => element('rect', { class: 'ambient-name-hole', x: position.x, y: position.y, width: 144, height: 22, rx: 4 })));
     }
 
     function create(id, slot) {
         const group = element('g', { class: 'ambient-connection', 'data-ambient-worker': id });
-        const path = element('path', { class: 'ambient-branch', pathLength: 1 });
-        const detail = element('path', { class: 'ambient-branch-detail' });
-        const packet = element('circle', { class: 'ambient-packet', r: 4 });
-        const motion = element('animateMotion', { dur: `${12 + slot * .7}s`, repeatCount: 'indefinite', keyPoints: '1;0', keyTimes: '0;1', calcMode: 'linear' });
-        packet.append(motion);
+        const maskID = `ambient-growth-${serial++}`;
+        const mask = element('mask', { id: maskID, maskUnits: 'userSpaceOnUse', x: 0, y: 0 });
+        const reveal = element('path', { class: 'ambient-reveal', pathLength: 1 });
+        const nameHoles = element('g');
+        mask.append(reveal, nameHoles);
+        const spine = element('path', { class: 'ambient-spine' });
+        const skin = element('g', { mask: `url(#${maskID})` });
+        const path = element('path', { class: 'ambient-branch' });
+        const rim = element('path', { class: 'ambient-branch-rim' });
+        const cups = element('g');
+        skin.append(path, rim, cups);
+        const lights = element('g', { mask: `url(#${maskID})` });
+        const motions = [];
+        const duration = 8 + slot * .25;
+        for (let i = 0; i < 3; i++) {
+            const packet = element('circle', { class: 'ambient-packet', r: i === 1 ? 3.5 : 3 });
+            const motion = element('animateMotion', { dur: `${duration}s`, begin: `${-i * duration / 3}s`, repeatCount: 'indefinite', keyPoints: '1;0', keyTimes: '0;1', calcMode: 'linear' });
+            packet.append(motion);
+            lights.append(packet);
+            motions.push(motion);
+        }
         const computer = element('g');
         computer.append(element('rect', { class: 'ambient-computer', x: -20, y: -16, width: 40, height: 28, rx: 4 }), element('rect', { class: 'ambient-screen', x: -15, y: -11, width: 30, height: 17, rx: 2 }), element('path', { class: 'ambient-computer', d: 'M0 12 V19 M-11 20 H11' }));
         const label = element('text', { class: 'ambient-worker-label', 'text-anchor': 'middle', y: 36 });
         computer.append(label);
-        group.append(path, detail, packet, computer);
+        group.append(mask, spine, skin, lights, computer);
         branches.append(group);
-        const connection = { group, path, detail, motion, computer, label, slot };
+        const connection = { group, path, spine, reveal, rim, cups, mask, nameHoles, motions, computer, label, slot };
         connections.set(id, connection);
         route(connection);
         if (moving()) {
-            path.animate([{ strokeDasharray: '1', strokeDashoffset: '1' }, { strokeDasharray: '1', strokeDashoffset: '0' }], { duration: 2600, delay: slot * 110, easing: 'ease-in-out', fill: 'backwards' });
-            detail.animate([{ opacity: 0 }, { opacity: .25 }], { duration: 600, delay: 2000 + slot * 110, fill: 'backwards' });
+            reveal.animate([{ strokeDasharray: '1', strokeDashoffset: '1' }, { strokeDasharray: '1', strokeDashoffset: '0' }], { duration: 2600, delay: slot * 110, easing: 'ease-in-out', fill: 'backwards' });
             computer.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 1300, delay: 900 + slot * 110, fill: 'backwards' });
         }
         return connection;
@@ -117,7 +173,7 @@
         if (!moving()) { connection.group.remove(); return; }
         connection.group.classList.remove('has-packet');
         connection.group.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 900 });
-        connection.path.animate([{ strokeDasharray: '1', strokeDashoffset: '0' }, { strokeDasharray: '1', strokeDashoffset: '1' }], { duration: 900 });
+        connection.reveal.animate([{ strokeDasharray: '1', strokeDashoffset: '0' }, { strokeDasharray: '1', strokeDashoffset: '1' }], { duration: 900 });
         const timer = setTimeout(() => { connection.group.remove(); retiring.delete(timer); }, 900);
         retiring.set(timer, connection.group);
     }
@@ -145,10 +201,11 @@
             }
             const busy = worker.inflight > 0;
             connection.group.classList.toggle('is-busy', busy);
-            connection.group.classList.toggle('has-packet', busy && packets++ < 4);
+            connection.group.classList.toggle('has-packet', busy && packets++ < 6);
             connection.label.textContent = worker.id === '\0group' ? `+ ${rest.length} workers` : worker.id.length > 18 ? `${worker.id.slice(0, 16)}…` : worker.id;
         }
         reportedActive = connected.some(worker => worker.inflight > 0);
+        protectNames();
         activity();
     }
 
@@ -157,13 +214,13 @@
         const rect = main.getBoundingClientRect();
         const top = document.querySelector('.appbar').offsetHeight;
         visible = rect.left >= 224 && innerWidth - rect.right >= 224 && innerHeight >= top + 690;
-        controls.hidden = !visible;
         geometry = { width: innerWidth, height: innerHeight, top, left: rect.left, right: rect.right };
         svg.setAttribute('viewBox', `0 0 ${innerWidth} ${innerHeight}`);
         const protectedTop = Math.max(top, rect.top + 16);
         document.getElementById('ambient-margin-path').setAttribute('d', `M0 ${top} H${innerWidth} V${innerHeight} H0 Z M${rect.left - 12} ${protectedTop} H${rect.right + 12} V${innerHeight} H${rect.left - 12} Z`);
         document.getElementById('ambient-mascot').setAttribute('transform', `translate(82 ${top + 80})`);
         for (const connection of connections.values()) route(connection);
+        protectNames();
         paint();
         schedulePoll();
     }
@@ -173,10 +230,10 @@
     // Only the test page needs a small read-only poll, and only while visible.
     function schedulePoll() {
         clearTimeout(pollTimer);
-        if (!overview && !stopped && visible && mode !== 'off' && !document.hidden && !pollRequest) pollTimer = setTimeout(poll, 3000);
+        if (!overview && !stopped && visible && !document.hidden && !pollRequest) pollTimer = setTimeout(poll, 3000);
     }
     async function poll() {
-        if (pollRequest || stopped || !visible || mode === 'off' || document.hidden) return;
+        if (pollRequest || stopped || !visible || document.hidden) return;
         const controller = new AbortController();
         pollRequest = controller;
         let timedOut = false;
@@ -190,19 +247,6 @@
         } catch { if (!controller.signal.aborted || timedOut) { stale = true; paint(); } }
         finally { clearTimeout(timeout); pollRequest = undefined; schedulePoll(); }
     }
-    function preference(value) {
-        if (!['on', 'still', 'off'].includes(value)) return;
-        mode = value;
-        select.value = mode;
-        if (mode === 'off') pollRequest?.abort();
-        paint();
-        schedulePoll();
-    }
-    select.addEventListener('change', () => {
-        preference(select.value);
-        try { localStorage.setItem(key, mode); } catch { /* Preference remains active for this page. */ }
-    });
-    window.addEventListener('storage', event => { if (event.key === key) preference(event.newValue || 'on'); });
     reduced.addEventListener('change', paint);
     window.addEventListener('resize', requestLayout);
     window.addEventListener('scroll', requestLayout, { passive: true });
@@ -216,7 +260,7 @@
         activity();
         // Give the POST time to reserve its worker, then pick up real job
         // metadata promptly. Never guess which worker handled a local prompt.
-        if (localActive && !overview && !stopped && visible && mode !== 'off' && !document.hidden && !pollRequest) {
+        if (localActive && !overview && !stopped && visible && !document.hidden && !pollRequest) {
             clearTimeout(pollTimer);
             pollTimer = setTimeout(poll, 250);
         }
@@ -244,5 +288,5 @@
     layout();
     if (overview) {
         update({ workers: Array.from(document.querySelectorAll('[data-worker]'), row => ({ id: row.dataset.worker, status: row.querySelector('[data-field="status"]').textContent.trim(), inflight: Number(row.querySelector('[data-field="inflight"]').textContent) })) });
-    } else if (visible && mode !== 'off') poll();
+    } else if (visible) poll();
 })();

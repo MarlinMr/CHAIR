@@ -1,0 +1,29 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CHAIR · Contribution scoreboard</title>
+    <link rel="stylesheet" href="/dashboard/style.css">
+    <script src="/dashboard/scoreboard.js" defer></script>
+</head>
+<body>
+    <header class="appbar"><a href="/" class="brand">CHAIR</a><span>Central Hub for AI Routing</span><span class="readonly">Contribution scoreboard</span></header>
+    <main>
+        <div class="page-header"><div><p class="eyebrow">All-time contributions</p><h1>Every worker makes a difference.</h1><p>Persistent worker rankings. Keep your worker ID to keep your score.</p></div><nav class="actions" aria-label="Scoreboard controls"><a class="button" href="/">Back to overview</a><button id="score-refresh" class="button" type="button">Refresh scores</button><button id="score-pause" class="button" type="button" aria-pressed="false">Pause live scores</button></nav></div>
+        <div class="score-toolbar"><div class="form-field"><label for="score-model">Compare model</label><select id="score-model"><option value="">All models</option>{{range .Models}}<option value="{{.}}">{{.}}</option>{{end}}</select></div><p id="score-status" class="muted" role="status">Updates every 3 seconds · Statistics since {{.Since.Format "2006-01-02 15:04 UTC"}}</p></div>
+        <p class="score-warning" id="score-warning" {{if not .Missed}}hidden{{end}}>Statistics storage has missed updates. Rankings may be incomplete; the operator should check storage.</p>
+        <div class="score-grid">
+            <section class="score-panel" aria-labelledby="score-tokens-heading"><h2 id="score-tokens-heading">Most output tokens</h2><p class="muted">Engine-reported totals. Missing usage is unavailable, never estimated.</p><div class="table-scroll"><table><caption class="sr-only">Top 20 workers by reported output tokens</caption><thead><tr><th>Rank</th><th>Worker</th><th>Tokens</th><th>Usage coverage</th></tr></thead><tbody id="score-tokens">{{range $index, $row := .Tokens}}<tr><td>{{rank $index}}</td><th scope="row"><code>{{$row.Worker}}</code></th><td>{{$row.Tokens}}</td><td>{{$row.Measured}} / {{$row.Completed}}</td></tr>{{else}}<tr><td colspan="4">No reported output usage yet.</td></tr>{{end}}</tbody></table></div></section>
+            <section class="score-panel" aria-labelledby="score-speed-heading"><h2 id="score-speed-heading">Fastest output delivery</h2><p class="muted">End-to-end tokens/s, including prompt, queue, and network time. Weighted average per worker/model; at least 3 samples and 32 tokens.</p><div class="table-scroll"><table><caption class="sr-only">Top 20 worker and model pairs by observed output tokens per second</caption><thead><tr><th>Rank</th><th>Worker / model</th><th>Tokens/s</th><th>Samples</th></tr></thead><tbody id="score-speed">{{range $index, $row := .Speed}}<tr><td>{{rank $index}}</td><th scope="row"><code>{{$row.Worker}}</code><small class="engine-type">{{$row.Model}}</small></th><td>{{printf "%.1f" $row.Rate}}</td><td>{{$row.Samples}}</td></tr>{{else}}<tr><td colspan="4">No qualifying speed samples yet.</td></tr>{{end}}</tbody></table></div></section>
+            <section class="score-panel" aria-labelledby="score-requests-heading"><h2 id="score-requests-heading">Most completed requests</h2><p class="muted">Successfully forwarded API requests. Failed and canceled work is shown separately.</p><div class="table-scroll"><table><caption class="sr-only">Top 20 workers by completed inference requests</caption><thead><tr><th>Rank</th><th>Worker</th><th>Completed</th><th>Failed / canceled</th></tr></thead><tbody id="score-requests">{{range $index, $row := .Requests}}<tr><td>{{rank $index}}</td><th scope="row"><code>{{$row.Worker}}</code></th><td>{{$row.Completed}}</td><td>{{$row.Failed}} / {{$row.Canceled}}</td></tr>{{else}}<tr><td colspan="4">No attributed API requests yet. Connect an engine and send a request.</td></tr>{{end}}</tbody></table></div></section>
+        </div>
+        <p class="score-note">Compare the same model for fairer speed results. Streaming Chat Completions clients should request <code>stream_options.include_usage: true</code>. Browser test prompts do not earn scoreboard credit. Only aggregates are stored, not prompts, responses, or individual request history.</p>
+        <footer>Reported contributions, not an attested benchmark or a payment ledger. Engines can misreport usage, aliases can refer to different models, and synthetic traffic can inflate scores. Workers remain listed after disconnects and hub restarts.</footer>
+    </main>
+</body>
+</html>

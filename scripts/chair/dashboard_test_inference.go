@@ -38,7 +38,7 @@ func (h *hub) serveInferenceTest(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/dashboard/test":
 		var page bytes.Buffer
-		if err := inferenceTestTemplate.Execute(&page, nil); err != nil {
+		if err := inferenceTestTemplate.Execute(&page, struct{ ScoreboardEnabled bool }{h.stats != nil}); err != nil {
 			http.Error(w, "test page unavailable", http.StatusInternalServerError)
 			return
 		}

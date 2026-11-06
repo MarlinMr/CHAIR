@@ -59,6 +59,8 @@ type hub struct {
 	allowInferenceTest     bool
 	downloadsRoot          *os.Root
 	enrollment             *workerEnrollment
+	stats                  *scoreStore
+	inferenceWG            sync.WaitGroup
 }
 
 func newHub(clientToken string, workerTokens map[string]string, maxConcurrentRequests int) *hub {
@@ -81,7 +83,8 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveDashboard(w, r)
 		return
 	}
-	// This experiment requires end-to-end TLS, even behind a reverse proxy.
+	// TLS terminates at the trusted hub, even behind a reverse proxy. This is
+	// not client-to-worker encryption hidden from the hub operator.
 	// Forwarded headers are not an authentication or transport-security signal.
 	if r.TLS == nil || r.Header.Get("Origin") != "" {
 		writeAPIError(w, r, http.StatusForbidden, "TLS required; browser requests are unsupported", "transport_forbidden")
@@ -122,6 +125,15 @@ func (h *hub) serveInference(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, http.StatusServiceUnavailable, "hub concurrency limit reached", "concurrency_limit")
 		return
 	}
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		writeAPIError(w, r, http.StatusServiceUnavailable, "hub is stopping", "hub_stopping")
+		return
+	}
+	h.inferenceWG.Add(1)
+	h.mu.Unlock()
+	defer h.inferenceWG.Done()
 	h.routeInference(w, r)
 }
 
@@ -251,6 +263,10 @@ func (h *hub) Close() error {
 	var result error
 	for range workers {
 		result = errors.Join(result, <-results)
+	}
+	h.inferenceWG.Wait()
+	if h.stats != nil {
+		result = errors.Join(result, h.stats.close())
 	}
 	return result
 }

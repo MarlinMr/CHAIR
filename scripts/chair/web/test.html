@@ -16,7 +16,7 @@ SPDX-License-Identifier: Apache-2.0
 <body>
     <header class="appbar"><a href="/" class="brand">CHAIR</a><span>Central Hub for AI Routing</span><span class="readonly">Authenticated test</span></header>
     <main class="test-page">
-        <div class="page-header"><div><p class="eyebrow">Test inference</p><h1>Try a small prompt.</h1><p>Uses the same model-aware routing and global concurrency limit as API clients.</p></div><a class="button" href="/">Back to dashboard</a></div>
+        <div class="page-header"><div><p class="eyebrow">Test inference</p><h1>Try a small prompt.</h1><p>Uses the same model-aware routing and global concurrency limit as API clients.</p></div><nav class="actions" aria-label="Test navigation">{{if .ScoreboardEnabled}}<a class="button" href="/dashboard/scoreboard">Scoreboard</a>{{end}}<a class="button" href="/">Back to dashboard</a></nav></div>
         <section class="test-panel" aria-label="Inference test">
             <p class="muted">Single-turn Chat Completions · up to 4096 prompt characters · 256 output tokens · 60-second limit. Engine support is required. No tools or conversation history.</p>
             <form id="test-form">
