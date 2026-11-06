@@ -1,0 +1,30 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+{{define "header"}}<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CHAIR · Setup guide</title>
+    <link rel="stylesheet" href="/dashboard/style.css">
+</head>
+<body>
+    <a class="skip-link" href="#guide-content">Skip to guide</a>
+    <header class="appbar"><a href="/" class="brand">CHAIR</a><span>Central Hub for AI Routing</span><span class="readonly">{{.Version}} · Setup guide</span></header>
+    <main class="guide-page">
+        <div class="page-header"><div><p class="eyebrow">Setup guide</p><h1>Connect your engines and clients.</h1><p>Hub examples use <code>{{.Origin}}</code>, the address you opened. Verify it is reachable from your workers and clients.</p></div><a class="button" href="/">Back to dashboard</a></div>
+        <p class="guide-notice">Commands still need your own model IDs, file paths, and credentials. Engine URLs refer to the worker's loopback interface. Certificate names remain examples: choose names/IPs matching your hub's certificate.</p>
+        <div class="guide-layout">
+            <nav class="guide-toc" aria-label="Guide contents"><h2>On this page</h2><ul>{{range .Sections}}<li><a href="#{{.ID}}">{{.Title}}</a></li>{{end}}</ul></nav>
+            <article id="guide-content" class="guide-content" aria-label="CHAIR setup instructions" tabindex="-1">
+{{end}}
+{{define "footer"}}
+            </article>
+        </div>
+        <footer>Bundled documentation. No credentials are inserted into these examples.</footer>
+    </main>
+</body>
+</html>
+{{end}}
