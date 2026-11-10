@@ -3,7 +3,46 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# NVIDIA Personal AI Router (PAIR)
+# CHAIR — Central Hub for AI Routing
+
+*Finally, a department chair that distributes the workload.*
+
+CHAIR routes AI inference through a CPU-only central hub to GPU workers across
+LANs and subnets. Workers make outbound authenticated TLS connections to the hub;
+no mDNS, inbound worker ports, or worker-to-worker connectivity is required.
+The hub matches requests to advertised models from **Ollama, llama.cpp, and vLLM**
+and distributes concurrent work among eligible workers. Use `--engine-type openai`
+for llama.cpp/vLLM workers. Clients can use the OpenAI-compatible Chat
+Completions API at the hub's `/v1` base URL; see the setup guide for OpenCode V2
+configuration and the supported API subset. Engines with native Responses support
+can opt in to stateless `/v1/responses` forwarding with `--enable-responses`;
+requests require `store: false` and inline conversation history.
+An optional authenticated web dashboard shows workers, their models, and active
+jobs at the hub's HTTPS address (`--dashboard-token-file`; use `--listen :443`
+for standard HTTPS).
+
+**Experimental:** CHAIR is currently a standalone headless Go tool in
+[`scripts/chair/`](scripts/chair/README.md), with `chair hub` and `chair worker`
+commands. It is **not integrated into the inherited PAIR desktop application**.
+Concurrency is configurable with `--max-concurrent-requests` (default 16).
+Real GPU and cross-subnet deployments still need validation; automated tests use
+fake local engines.
+
+- [Setup, networking, credentials, and limitations](scripts/chair/README.md)
+- [Download unsigned CI previews](https://github.com/MarlinMr/CHAIR/actions/workflows/chair.yml)
+- [Upstream NVIDIA Personal AI Router](https://github.com/NVIDIA/Personal-AI-Router)
+
+This is an independent fork, not an official NVIDIA product or release. NVIDIA's
+copyright and license notices are preserved. CHAIR does not pool VRAM, shard
+models, or split a single inference request across machines.
+
+## Inherited NVIDIA PAIR application
+
+**The remaining documentation describes the unchanged upstream PAIR application,
+not CHAIR.** Its installers, screenshots, engine support, and peer-to-peer pairing
+do not describe the CHAIR executable. Use the CHAIR guide above for the new hub.
+
+### NVIDIA Personal AI Router (PAIR)
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Security Policy](https://img.shields.io/badge/security-policy-green.svg)](SECURITY.md)
