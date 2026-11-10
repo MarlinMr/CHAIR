@@ -26,6 +26,10 @@ type openAIError struct {
 // Hub/transport errors use the client's API dialect. Upstream engine responses
 // are forwarded unchanged, including their own error bodies and SSE events.
 func writeAPIError(w http.ResponseWriter, r *http.Request, status int, message, code string) {
+	if messagesPath(r.URL.Path) {
+		writeMessagesError(w, status, message)
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, "/v1/") {
 		http.Error(w, message, status)
 		return

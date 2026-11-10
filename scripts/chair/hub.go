@@ -94,12 +94,16 @@ func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.connectWorker(w, r)
 		return
 	}
-	if !authenticated(r, h.clientToken) {
+	clientAuthenticated := authenticated(r, h.clientToken)
+	if messagesPath(r.URL.Path) {
+		clientAuthenticated = authenticatedMessages(r, h.clientToken)
+	}
+	if !clientAuthenticated {
 		h.logger.Warn("request rejected", "reason", "client_authentication_failed")
 		writeAPIError(w, r, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
 		return
 	}
-	if !allowedRequest(r) {
+	if !allowedHubRequest(r) {
 		writeAPIError(w, r, http.StatusNotFound, "unsupported inference route", "unsupported_route")
 		return
 	}

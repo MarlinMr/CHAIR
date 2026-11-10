@@ -305,7 +305,21 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, http.StatusBadRequest, "Responses requires store:false, no background execution, and inline history without previous_response_id, conversation, or item_reference", "unsupported_response_state")
 		return
 	}
-	worker := h.reserveWorker(request.Model, r.URL.Path)
+	routePath := r.URL.Path
+	var messages messagesRequest
+	if r.URL.Path == "/v1/messages" {
+		if version := r.Header.Get("Anthropic-Version"); version != "" && version != "2023-06-01" {
+			writeAPIError(w, r, http.StatusBadRequest, "unsupported anthropic-version", "unsupported_version")
+			return
+		}
+		messages, body, err = translateMessagesRequest(body)
+		if err != nil {
+			writeAPIError(w, r, http.StatusBadRequest, err.Error(), "unsupported_messages_request")
+			return
+		}
+		routePath = "/v1/chat/completions"
+	}
+	worker := h.reserveWorker(request.Model, routePath)
 	requestID := h.requestID.Add(1)
 	logger := h.logger.With("request_id", requestID, "model", request.Model, "method", r.Method, "path", r.URL.Path)
 	if worker == nil {
@@ -338,6 +352,8 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 			logger.Warn("inference interrupted", "reason", "stream_interrupted")
 		case logged.status >= http.StatusBadRequest:
 			outcome = "failed"
+		case usage != nil && usage.failed:
+			outcome = "failed"
 		}
 		logger.Debug("inference finished", "outcome", outcome, "status", logged.status, "duration_ms", time.Since(started).Milliseconds(), "response_bytes", logged.bytes)
 		if h.stats != nil && r.Context().Value(inferenceTestContextKey{}) != true {
@@ -357,6 +373,11 @@ func (h *hub) routeInference(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	if r.URL.Path == "/v1/messages" {
+		usage = h.forwardMessages(logged, r, worker, messages, body, requestID)
+		finished = true
+		return
+	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 	r.TransferEncoding = nil

@@ -43,6 +43,9 @@ stream and cancels the local engine request without closing other streams.
   chat streaming and transparent tool-call forwarding to the selected engine.
 - Stateless `POST /v1/responses` on OpenAI-mode workers explicitly started with
   `--enable-responses`, including native Responses SSE events and cancellation.
+- An Anthropic Messages adapter at `POST /v1/messages` for Claude Code: translates
+  text, client tool calls/results, and streaming into worker Chat Completions.
+  See [Claude Code](#claude-code) for required settings and supported features.
 - `--engine-type ollama` (default) discovers `/api/tags` and serves native plus
   OpenAI chat. `--engine-type openai` discovers `/v1/models` and serves only the
   OpenAI Chat Completions subset, plus optional Responses forwarding. Types and
@@ -60,8 +63,10 @@ stream and cancels the local engine request without closing other streams.
   its registration, and authorizes it immediately without restarting the hub.
 - Configurable concurrent inference requests globally (`--max-concurrent-requests`,
   default **16**), 8 MiB request bodies, 64 KiB response headers,
-  and a five-minute wait for engine response headers. Responses stream without
-  whole-response buffering; yamux applies per-stream flow control. Request bodies
+  and a five-minute wait for engine response headers. Streaming responses are not
+  buffered in full; yamux applies per-stream flow control. The Messages adapter
+  buffers bounded tool argument objects for validation; non-streamed Messages
+  replies are limited to 8 MiB. Request bodies
   are buffered within the limit to read the requested model before dispatch.
 - The hub fetches each worker's model inventory through its tunnel on connection
   and every two seconds, with a three-second timeout and 1 MiB response limit.
@@ -89,7 +94,7 @@ stream and cancels the local engine request without closing other streams.
 **Not implemented:** per-user enrollment accounts/approval, worker certificates/mTLS,
 live credential revocation, GPU telemetry, queues, request deadlines,
 per-client quotas, stored/background Responses and other OpenAI endpoints (including embeddings),
-Anthropic compatibility, remote engine administration,
+full Anthropic feature parity, remote engine administration,
 desktop integration, service installation, or hub high availability. A stalled
 client can occupy a concurrency slot until it disconnects; do not expose this
 experiment to untrusted clients. Inventory can change between refresh and
@@ -442,7 +447,9 @@ operational metadata. There is no browser reset/edit API.
 
 #### Where token counts come from
 
-The hub observes metadata while forwarding response bytes unchanged. Ollama
+For native/OpenAI routes, the hub observes metadata while forwarding response
+bytes unchanged. The Messages adapter separately translates API dialects and
+credits the same engine-reported output usage after successful completion. Ollama
 native routes use final `eval_count`; Chat Completions uses
 `usage.completion_tokens`; Responses uses completed-response `usage.output_tokens`.
 For streamed Chat Completions, clients generally need:
@@ -452,7 +459,9 @@ For streamed Chat Completions, clients generally need:
 ```
 
 The engine must support and actually return usage. CHAIR **does not rewrite
-requests** to force it, execute extra requests, or count text as tokens. Repeated
+Chat Completions requests** to force it, execute extra requests, or count text as
+tokens. The Messages adapter explicitly requests streaming usage in the Chat
+Completions request it constructs. Repeated
 identical usage frames count once; invalid, negative, conflicting, or implausibly
 large counts are not credited. Metadata parsing is bounded to 256 KiB per JSON
 response/SSE event/NDJSON line; oversized frames can leave usage unavailable.
@@ -933,7 +942,7 @@ tools or emulate unsupported engine parameters. Request/response contents remain
 excluded from logs. Streaming, cancellation, concurrency limits, and model-owner
 selection work exactly as for the native Ollama routes.
 
-Hub-generated errors on `/v1/` use an OpenAI-shaped JSON `error` object; engine
+Hub-generated errors on the OpenAI routes use an OpenAI-shaped JSON `error` object; engine
 HTTP errors are passed through with their status/body unchanged. There is no
 automatic job replay, although a client SDK may independently retry failed calls.
 This is a **Chat Completions and stateless Responses subset**, not the entire
@@ -997,6 +1006,137 @@ Tests exercise API-shaped fake engines, not live Responses-capable engines or
 end-to-end SDK/agent workflows. Check your engine/version's API documentation
 and validate it locally before enabling the flag. The join page's generated
 command does not enable Responses; append the flag deliberately when supported.
+
+### Claude Code
+
+The hub implements an **Anthropic Messages-to-Chat Completions adapter** at
+`POST /v1/messages`, including the exact optional `?beta=true` query used by
+Claude Code. Both Ollama and OpenAI-mode workers can serve it through their
+existing Chat Completions route. No worker flag, transport change, new credential,
+or engine-native Anthropic endpoint is required. Upgrade/restart the **hub** to
+v0.1.9 or later; v0.1.8 and earlier do not have this adapter.
+
+This runs Claude Code's client with your worker's model. It does **not** supply
+Claude weights or use a Claude subscription. Anthropic does not officially
+support Claude Code with non-Claude models. Choose a model/engine with working
+OpenAI tool calling and a large enough configured context window.
+
+#### Connect
+
+1. Keep the hub/worker running as above. Copy the **client** token and public
+   hub/CA certificate securely to the Claude Code machine. Never copy `hub.key`
+   or use a dashboard/worker token for inference.
+2. Get an exact installed model ID using the authenticated model list:
+
+   ```bash
+   curl --fail-with-body --cacert "$HOME/.config/chair/hub.crt" \
+     --header "Authorization: Bearer $(cat "$HOME/.config/chair/client.token")" \
+     https://hub.example.internal:8443/v1/models
+   ```
+
+3. In the project you want to work on, select that exact ID and launch Claude
+   Code with thinking and experimental Anthropic-only features disabled:
+
+   ```bash
+   CHAIR_MODEL='your-installed-model:latest'
+
+   # Clear conflicting provider/credential selection from this shell.
+   unset ANTHROPIC_AUTH_TOKEN
+   unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY
+
+   ANTHROPIC_BASE_URL='https://hub.example.internal:8443' \
+   ANTHROPIC_API_KEY="$(cat "$HOME/.config/chair/client.token")" \
+   ANTHROPIC_DEFAULT_HAIKU_MODEL="$CHAIR_MODEL" \
+   ANTHROPIC_DEFAULT_SONNET_MODEL="$CHAIR_MODEL" \
+   ANTHROPIC_DEFAULT_OPUS_MODEL="$CHAIR_MODEL" \
+   NODE_EXTRA_CA_CERTS="$HOME/.config/chair/hub.crt" \
+   MAX_THINKING_TOKENS=0 \
+   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=0 \
+   CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 \
+   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+   DISABLE_PROMPT_CACHING=1 \
+   claude --model "$CHAIR_MODEL" --settings '{"alwaysThinkingEnabled":false}'
+   ```
+
+   The base URL is the **hub root, without `/v1`**. API-key authentication can
+   require approval in the interactive client. A bearer `ANTHROPIC_AUTH_TOKEN`
+   containing the client token also works on this endpoint, but `--bare` mode
+   expects `ANTHROPIC_API_KEY`. If both credential headers are sent, both must
+   match. Keep credentials outside source control. Omit the extra-CA variable
+   when using an already trusted issuer; never disable certificate validation.
+
+Set the actual model context/output limits in Claude Code/your engine rather
+than assuming Claude's default window applies to a local model. Disable gateway
+model discovery: CHAIR's model list is OpenAI-shaped, accepts no query string,
+and is not an Anthropic discovery implementation. Use explicit IDs instead of
+Claude model aliases. User/managed settings can override environment choices;
+check those settings if an unsupported feature still appears in requests.
+
+#### Supported translation and limits
+
+- String/text-block system prompts and user/assistant messages; multiple text
+  blocks are joined with newlines. Custom tool schemas become OpenAI function
+  tools. Assistant tool calls and matching user tool results preserve call IDs;
+  tool results precede new user text. Error results get a `[tool error]` prefix.
+  Automatic, required, named, and disabled tool choice are mapped, including
+  disabling parallel calls. CHAIR does **not** execute tools; Claude Code does.
+- JSON replies and incremental Anthropic SSE `message_start`, indexed text/tool
+  blocks, text/argument deltas, block stops, final usage/stop reason, and
+  `message_stop`. Interleaved parallel tool fragments are supported. Engine SSE
+  comments become `ping` events. Cancellation closes the worker request, and
+  shared routing, global concurrency, active-job tracking, and persistent scores
+  apply exactly once. No adapter retries or worker affinity are introduced.
+- `max_tokens`, temperature, top-p, and stop sequences map to their Chat
+  Completions equivalents. `output_config.effort` maps to `reasoning_effort`;
+  the selected engine/model must support the requested value. The Chat API does
+  not reliably distinguish a matched stop sequence from normal completion, so
+  `stop` maps to `end_turn` with `stop_sequence:null`. `length` maps to
+  `max_tokens`; `tool_calls` maps to `tool_use`.
+- The adapter constructs its own upstream request with
+  `stream_options.include_usage:true` when streaming. Final reported input/output
+  counts are translated, not estimated. The required Anthropic usage fields are
+  zero when not reported (and initially in `message_start`); missing output usage
+  remains **unavailable in the scoreboard**, never credited as measured zero.
+  Text and tool inputs are not persisted or logged.
+- Authentication accepts the client bearer token or `x-api-key`, only for the
+  Messages dialect. TLS/no-browser rules still apply. Only the supported
+  `anthropic-version:2023-06-01` is accepted when present. Claude headers,
+  credentials, cookies, and engine redirect/cookie headers are not relayed across
+  the adapter. Errors use Anthropic envelopes; upstream error bodies are replaced
+  with sanitized messages. A malformed/truncated stream emits an SSE error,
+  never successful termination or token credit.
+- Request and non-streamed reply limits are 8 MiB. Stream lines/events are capped
+  at 1 MiB; retained tool arguments are capped at 8 MiB per request, with at most
+  1,024 messages/tools/content blocks. Tool arguments must form valid JSON objects
+  before block completion. Unknown fields/unsupported features are rejected.
+- **Not implemented:** images/documents/audio, extended/adaptive thinking or
+  signed thinking history, server tools, tool search/deferred or strict tools,
+  structured outputs, context-management extensions, assistant prefilling,
+  Anthropic prompt caching/accounting, or `/v1/messages/count_tokens`. Cache
+  hints and client metadata are accepted but not forwarded or implemented.
+  Token counting returns `404`; Claude Code may use its own local estimate.
+  An accepted beta header does not imply implementation of that beta feature.
+
+#### Validation
+
+Go fixtures cover translation, parallel tool fragments, JSON/SSE completion,
+shared capacity/cancellation, authentication, query restrictions, bounded parsing,
+sanitized errors, and scoreboard credit. An isolated **Claude Code 2.1.226**
+smoke test used real TLS hub/worker processes and a fake OpenAI engine: the client
+streamed a `Read` call, read a sandbox file, returned its result, and completed the
+next model turn. To rerun it with an installed `claude` binary:
+
+```bash
+go build -o /absolute/path/chair-test .
+CHAIR_TEST_BINARY=/absolute/path/chair-test python3 client-tests/claude-code.py
+```
+
+The optional script uses only a temporary workspace, generated credentials, and
+a read-only client tool; it does not contact a real model/provider. Real-model
+tool quality, other Claude Code versions/features, long agent sessions, and
+non-Linux client behavior remain unvalidated. See the official
+[gateway protocol](https://code.claude.com/docs/en/llm-gateway-protocol) and
+[environment reference](https://code.claude.com/docs/en/env-vars).
 
 ### OpenCode V2 configuration
 
